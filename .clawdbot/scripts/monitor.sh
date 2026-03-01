@@ -74,7 +74,7 @@ def get_task_repo(task):
 def get_task_worktree_base(task):
     return workspace_worktree_base if task.get('workspace') else worktree_base
 
-def run_notify(task_id, phase, message, product_goal='', next_step='', started_at=''):
+def run_notify(task_id, phase, message, product_goal='', next_step='', started_at='', plan_file=''):
     \"\"\"Send a Slack notification. Pipes message via stdin to avoid ARG_MAX.\"\"\"
     # Auto-lookup startedAt from task_map if not explicitly provided
     if not started_at and task_id in task_map:
@@ -86,6 +86,8 @@ def run_notify(task_id, phase, message, product_goal='', next_step='', started_a
         cmd += ['--next', next_step]
     if started_at:
         cmd += ['--started-at', started_at]
+    if plan_file:
+        cmd += ['--plan-file', plan_file]
     subprocess.run(cmd, input=message, capture_output=True, text=True, env=_clean_env)
 
 def read_tasks():
@@ -906,7 +908,8 @@ for task in tasks:
                     run_notify(tid, 'plan_review',
                         plan_notify_text,
                         product_goal,
-                        'Awaiting human plan approval')
+                        'Awaiting human plan approval',
+                        plan_file=plan_file)
                 else:
                     # Auto-advance — no human gate
                     task['planContent'] = plan_content
