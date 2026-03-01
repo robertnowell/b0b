@@ -100,7 +100,11 @@ import json, sys
 lines = sys.stdin.read().split('\n', 1)
 msg = lines[0]
 notif = lines[1] if len(lines) > 1 else ''
-print(json.dumps({'task_id': sys.argv[1], 'phase': sys.argv[2], 'message': msg, 'product_goal': sys.argv[3], 'next_step': sys.argv[4], 'text': notif}))
+entry = {'task_id': sys.argv[1], 'phase': sys.argv[2], 'message': msg, 'product_goal': sys.argv[3], 'next_step': sys.argv[4], 'text': notif}
+# For plan_review, include planFile path so Kopiclaw can post the full plan
+if sys.argv[2] == 'plan_review':
+    entry['requiresFullPlanPost'] = True
+print(json.dumps(entry))
 " "$task_id" "$phase" "${product_goal:-}" "$next_step" <<< "${message}
 ${notification}" >> "$NOTIFY_OUTBOX"
   fi

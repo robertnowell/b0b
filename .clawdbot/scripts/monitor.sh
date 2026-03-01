@@ -754,8 +754,16 @@ for task in tasks:
                         'planFile': plan_file,
                         'planContent': plan_content,
                     })
+                    # Build full plan notification for #project-kopi-claw
+                    plan_notify_text = (
+                        f'Plan ready for review. Run approve-plan.sh {tid} to proceed.\n\n'
+                        f'---\n\n'
+                        f'{plan_content[:3800]}'
+                    )
+                    if len(plan_content) > 3800:
+                        plan_notify_text += f'\n\n_(truncated — full plan in {plan_file})_'
                     run_notify(tid, 'plan_review',
-                        f'Plan ready for review. Run approve-plan.sh {tid} to proceed.\nSummary: {plan_summary[:200]}',
+                        plan_notify_text,
                         product_goal,
                         'Awaiting human plan approval')
                 else:
