@@ -976,10 +976,28 @@ for task in tasks:
             changes_made += 1
 
         elif phase == 'pr_creating':
-            # Advance to reviewing (no spawn needed)
-            apply_updates(tid, {'phase': 'reviewing', 'status': 'reviewing'})
+            # Capture PR number immediately so it's available for all downstream phases
+            branch = task.get('branch', '')
+            pr_number = None
+            if branch:
+                task_repo = get_task_repo(task)
+                pr_result = subprocess.run(
+                    ['gh', 'pr', 'list', '--head', branch, '--state', 'all', '--json', 'number', '--limit', '1'],
+                    capture_output=True, text=True, cwd=task_repo)
+                if pr_result.returncode == 0 and pr_result.stdout.strip():
+                    prs = json.loads(pr_result.stdout)
+                    if prs:
+                        pr_number = prs[0].get('number')
+
+            # Advance to reviewing
+            updates = {'phase': 'reviewing', 'status': 'reviewing'}
+            if pr_number:
+                updates['prNumber'] = pr_number
+            apply_updates(tid, updates)
+
+            pr_label = f' (PR #{pr_number})' if pr_number else ''
             run_notify(tid, 'reviewing',
-                'PR created. Awaiting review.',
+                f'PR created{pr_label}. Awaiting review.',
                 product_goal,
                 'Awaiting human review')
             changes_made += 1
