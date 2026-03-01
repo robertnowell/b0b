@@ -56,6 +56,9 @@ fill_template = sys.argv[10]
 plans_dir = sys.argv[11]
 workspace_repo = sys.argv[12]
 workspace_worktree_base = sys.argv[13]
+max_auto_retries = int(sys.argv[14])
+max_split_depth = int(sys.argv[15])
+max_auto_split_attempts = int(sys.argv[16])
 
 check_output = json.loads(sys.stdin.read())
 
@@ -448,14 +451,14 @@ for task in tasks:
     description = task.get('description', '')
 
     # Skip tasks that are already terminal or parked (plan_review is a human gate)
-    if phase in ('merged', 'needs_split', 'plan_review'):
+    if phase in ('merged', 'plan_review', 'split'):
         continue
 
     # Race guard: skip if another monitor run acted on this task within 60s
     import time as _time
     last_action = task.get('lastMonitorAction', 0)
     now = int(_time.time())
-    if now - last_action < 60 and phase not in ('reviewing', 'pr_ready'):
+    if now - last_action < 60 and phase not in ('reviewing', 'pr_ready', 'needs_split'):
         continue
 
     # --- Handle reviewing (independent of status) ---
@@ -516,6 +519,144 @@ for task in tasks:
                         'Done')
                     changes_made += 1
         # If not yet merged, stay in pr_ready (wait for next cycle)
+        continue
+
+    # --- Handle needs_split: auto-retry or auto-split ---
+    if phase == 'needs_split':
+        auto_retry_count = task.get('autoRetryCount', 0)
+        auto_split_attempt_count = task.get('autoSplitAttemptCount', 0)
+        split_depth = task.get('splitDepth', 0)
+
+        # Decide: retry or split
+        # Retry if: hasn't been retried yet AND is not a subtask (splitDepth == 0)
+        should_retry = (auto_retry_count < max_auto_retries and split_depth == 0)
+        # Split if: retry exhausted AND hasn't been split already AND has required fields
+        should_split = (not should_retry
+                        and split_depth < max_split_depth
+                        and auto_split_attempt_count < max_auto_split_attempts
+                        and description and product_goal)
+
+        if should_retry:
+            new_retry_count = auto_retry_count + 1
+            preserved_findings = task.get('findings', []) + [f'Auto-retry #{new_retry_count} triggered']
+            run_notify(tid, 'planning',
+                f'Auto-retrying from needs_split (retry {new_retry_count}/{max_auto_retries}). Previous findings preserved.',
+                product_goal,
+                f'Re-planning with context from {len(task.get("findings", []))} previous findings')
+            task['iteration'] = 0
+            task['autoRetryCount'] = new_retry_count
+            task['findings'] = preserved_findings
+            ok = spawn_agent(task, 'planning', 'plan.md', task.get('agent'))
+            if ok:
+                apply_updates(tid, {
+                    'phase': 'planning',
+                    'status': 'running',
+                    'iteration': 0,
+                    'autoRetryCount': new_retry_count,
+                    'autoSplitAttemptCount': 0,
+                    'findings': preserved_findings,
+                })
+            else:
+                print(f'ERROR: spawn failed for {tid} during auto-retry')
+                run_notify(tid, 'needs_split', f'Auto-retry spawn failed', product_goal)
+            changes_made += 1
+
+        elif should_split:
+            auto_split_script = os.path.join(script_dir, 'auto-split.sh')
+            split_result = subprocess.run(
+                [auto_split_script,
+                 '--task-id', tid,
+                 '--description', description,
+                 '--product-goal', product_goal,
+                 '--findings', json.dumps(task.get('findings', [])),
+                 '--agent', task.get('agent', 'claude')],
+                capture_output=True, text=True, cwd=get_task_repo(task),
+                env=_clean_env)
+
+            if split_result.returncode == 0 and split_result.stdout.strip():
+                try:
+                    subtasks = json.loads(split_result.stdout)
+                    subtask_ids = []
+                    dispatch_script = os.path.join(script_dir, 'dispatch.sh')
+                    for st in subtasks:
+                        st_id = f'{tid}-{st[\"suffix\"]}'
+                        st_branch = f'{task.get(\"branch\", tid)}-{st[\"suffix\"]}'
+                        dispatch_cmd = [
+                            dispatch_script,
+                            '--task-id', st_id,
+                            '--branch', st_branch,
+                            '--product-goal', product_goal,
+                            '--description', st['description'],
+                            '--agent', task.get('agent', 'claude'),
+                            '--phase', 'planning',
+                            '--require-plan-review', 'false',
+                        ]
+                        if task.get('workspace'):
+                            dispatch_cmd.append('--workspace')
+                        d_result = subprocess.run(dispatch_cmd, capture_output=True, text=True,
+                                                  cwd=get_task_repo(task), env=_clean_env)
+                        if d_result.returncode == 0:
+                            subtask_ids.append(st_id)
+                            apply_updates(st_id, {'splitDepth': split_depth + 1, 'parentTask': tid})
+                        else:
+                            print(f'WARNING: Failed to dispatch subtask {st_id}: {d_result.stderr}')
+
+                    if subtask_ids:
+                        apply_updates(tid, {
+                            'phase': 'split',
+                            'status': 'split',
+                            'autoSplitAttemptCount': auto_split_attempt_count,
+                            'subtasks': subtask_ids,
+                        })
+                        run_notify(tid, 'split',
+                            f'Auto-split into {len(subtask_ids)} subtasks: {", ".join(subtask_ids)}',
+                            product_goal,
+                            'Subtasks are now running')
+                    else:
+                        print(f'WARNING: No subtasks dispatched for {tid}')
+                        new_split_attempt_count = auto_split_attempt_count + 1
+                        new_findings = task.get('findings', []) + [f'Auto-split attempt #{new_split_attempt_count} failed: no subtasks created']
+                        updates = {
+                            'phase': 'needs_split',
+                            'status': 'needs_split',
+                            'autoSplitAttemptCount': new_split_attempt_count,
+                            'findings': new_findings,
+                        }
+                        if new_split_attempt_count >= max_auto_split_attempts:
+                            updates['findings'] = new_findings + [f'Auto-split exhausted after {new_split_attempt_count} failed attempts']
+                        apply_updates(tid, updates)
+                        run_notify(tid, 'needs_split', f'Auto-split failed: no subtasks created', product_goal)
+                except (json.JSONDecodeError, KeyError) as e:
+                    print(f'WARNING: Failed to parse split output for {tid}: {e}')
+                    new_split_attempt_count = auto_split_attempt_count + 1
+                    new_findings = task.get('findings', []) + [f'Auto-split attempt #{new_split_attempt_count} failed: bad output']
+                    updates = {
+                        'phase': 'needs_split',
+                        'status': 'needs_split',
+                        'autoSplitAttemptCount': new_split_attempt_count,
+                        'findings': new_findings,
+                    }
+                    if new_split_attempt_count >= max_auto_split_attempts:
+                        updates['findings'] = new_findings + [f'Auto-split exhausted after {new_split_attempt_count} failed attempts']
+                    apply_updates(tid, updates)
+                    run_notify(tid, 'needs_split', f'Auto-split failed: bad output', product_goal)
+            else:
+                print(f'WARNING: auto-split.sh failed for {tid}: {split_result.stderr}')
+                new_split_attempt_count = auto_split_attempt_count + 1
+                new_findings = task.get('findings', []) + [f'Auto-split attempt #{new_split_attempt_count} failed: split command error']
+                updates = {
+                    'phase': 'needs_split',
+                    'status': 'needs_split',
+                    'autoSplitAttemptCount': new_split_attempt_count,
+                    'findings': new_findings,
+                }
+                if new_split_attempt_count >= max_auto_split_attempts:
+                    updates['findings'] = new_findings + [f'Auto-split exhausted after {new_split_attempt_count} failed attempts']
+                apply_updates(tid, updates)
+                run_notify(tid, 'needs_split', f'Auto-split failed', product_goal)
+            changes_made += 1
+
+        # else: truly terminal — needs human intervention, do nothing
         continue
 
     # Only stamp and act if the task needs action (not just running)
@@ -1005,6 +1146,6 @@ for task in tasks:
     # running tasks in non-terminal phases: no action needed (wait for completion)
 
 print(json.dumps({'processed': len(task_map), 'changes_made': changes_made}, indent=2))
-" "$SCRIPT_DIR" "$TASKS_FILE" "$LOCK_FILE" "$REPO_ROOT" "$WORKTREE_BASE" "$MAX_ITERATIONS" "$NOTIFY" "$SPAWN" "$LOG_DIR" "$FILL_TEMPLATE" "$PLANS_DIR" "$WORKSPACE_REPO" "$WORKSPACE_WORKTREE_BASE" <<< "$CHECK_OUTPUT"
+" "$SCRIPT_DIR" "$TASKS_FILE" "$LOCK_FILE" "$REPO_ROOT" "$WORKTREE_BASE" "$MAX_ITERATIONS" "$NOTIFY" "$SPAWN" "$LOG_DIR" "$FILL_TEMPLATE" "$PLANS_DIR" "$WORKSPACE_REPO" "$WORKSPACE_WORKTREE_BASE" "$MAX_AUTO_RETRIES" "$MAX_SPLIT_DEPTH" "$MAX_AUTO_SPLIT_ATTEMPTS" <<< "$CHECK_OUTPUT"
 
 log "=== Monitor run completed ==="

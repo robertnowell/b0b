@@ -26,6 +26,7 @@ _infer_next_step() {
     pr_ready)      echo "Awaiting human merge" ;;
     merged)        echo "Done" ;;
     needs_split)   echo "Needs manual split into subtasks" ;;
+    split)         echo "Subtasks dispatched" ;;
     failed)        echo "Needs investigation" ;;
     *)             echo "Unknown" ;;
   esac

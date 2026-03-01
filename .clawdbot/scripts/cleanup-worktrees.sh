@@ -30,7 +30,7 @@ try:
 
     active = []
     for task in tasks:
-        if task.get('status') in ('merged', 'needs_split', 'abandoned'):
+        if task.get('status') in ('merged', 'abandoned', 'split'):
             tid = task['id']
             worktree = task.get('worktree', os.path.join(worktree_base, tid))
             tmux = task.get('tmuxSession', f'agent-{tid}')
