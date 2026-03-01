@@ -611,7 +611,7 @@ for task in tasks:
                             'subtasks': subtask_ids,
                         })
                         run_notify(tid, 'split',
-                            f'Auto-split into {len(subtask_ids)} subtasks: {", ".join(subtask_ids)}',
+                            f'Auto-split into {len(subtask_ids)} subtasks: ' + ', '.join(subtask_ids),
                             product_goal,
                             'Subtasks are now running')
                     else:
