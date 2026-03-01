@@ -405,12 +405,12 @@ class TestTerminalPhaseSkip(unittest.TestCase):
 
     def test_merged_is_terminal(self):
         """merged phase should be skipped (terminal)."""
-        terminal = ('merged', 'needs_split', 'plan_review')
+        terminal = ('merged', 'split', 'plan_review')
         self.assertIn('merged', terminal)
 
     def test_pr_ready_is_not_terminal(self):
         """pr_ready should NOT be in the terminal list."""
-        terminal = ('merged', 'needs_split', 'plan_review')
+        terminal = ('merged', 'split', 'plan_review')
         self.assertNotIn('pr_ready', terminal,
                          'pr_ready must not be terminal — it needs polling')
 
