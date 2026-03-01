@@ -15,9 +15,6 @@ LOG_DIR="${STATE_DIR}/logs"
 PLANS_DIR="${STATE_DIR}/plans"
 NOTIFY_OUTBOX="${STATE_DIR}/notify-outbox.jsonl"
 
-# Legacy alias
-PIPELINE_DIR="${STATE_DIR}"
-
 WORKTREE_BASE="/Users/kopi/Projects/kopi-worktrees"
 WORKSPACE_REPO="/Users/kopi/.openclaw/workspace-kopiclaw"
 WORKSPACE_WORKTREE_BASE="/Users/kopi/.openclaw/kopi-worktrees"
