@@ -61,4 +61,4 @@ Override with the `CLAWDBOT_STATE_DIR` environment variable.
   --phase planning
 ```
 
-The pipeline will advance the task through: planning → plan_review → implementing → auditing → fixing → testing → pr_creating → reviewing → merged.
+The pipeline will advance the task through: planning → plan_review → implementing → auditing → fixing → testing → pr_creating → reviewing → pr_ready → merged.

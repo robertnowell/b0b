@@ -455,7 +455,7 @@ for task in tasks:
     import time as _time
     last_action = task.get('lastMonitorAction', 0)
     now = int(_time.time())
-    if now - last_action < 60 and phase != 'reviewing':
+    if now - last_action < 60 and phase not in ('reviewing', 'pr_ready'):
         continue
 
     # --- Handle reviewing (independent of status) ---
@@ -475,13 +475,47 @@ for task in tasks:
                     checks = prs[0].get('statusCheckRollup', [])
                     ci_pass = checks and all((c.get('conclusion') or c.get('state', '')).upper() == 'SUCCESS' for c in checks)
         if pr_number and ci_pass:
-            apply_updates(tid, {'phase': 'merged', 'status': 'merged'})
-            run_notify(tid, 'merged',
-                f'PR #{pr_number} ready for human review',
+            apply_updates(tid, {'phase': 'pr_ready', 'status': 'pr_ready', 'prNumber': pr_number})
+            run_notify(tid, 'pr_ready',
+                f'PR #{pr_number} passed CI — ready for human review',
                 product_goal,
                 'Merge when ready')
             changes_made += 1
         # If no PR or CI not passing yet, stay in reviewing (wait for next cycle)
+        continue
+
+    # --- Handle pr_ready: poll for actual merge ---
+    if phase == 'pr_ready':
+        branch = task.get('branch', '')
+        task_repo = get_task_repo(task)
+        pr_number = task.get('prNumber')
+
+        # Backfill PR number for tasks created before prNumber tracking existed.
+        if not pr_number and branch:
+            pr_result = subprocess.run(
+                ['gh', 'pr', 'list', '--head', branch, '--state', 'open', '--json', 'number', '--limit', '1'],
+                capture_output=True, text=True, cwd=task_repo)
+            if pr_result.returncode == 0 and pr_result.stdout.strip():
+                prs = json.loads(pr_result.stdout)
+                if prs:
+                    pr_number = prs[0].get('number')
+                    apply_updates(tid, {'prNumber': pr_number})
+                    changes_made += 1
+
+        if pr_number:
+            pr_state_result = subprocess.run(
+                ['gh', 'pr', 'view', str(pr_number), '--json', 'state'],
+                capture_output=True, text=True, cwd=task_repo)
+            if pr_state_result.returncode == 0 and pr_state_result.stdout.strip():
+                pr_state = json.loads(pr_state_result.stdout).get('state', '')
+                if str(pr_state).upper() == 'MERGED':
+                    apply_updates(tid, {'phase': 'merged', 'status': 'merged'})
+                    run_notify(tid, 'merged',
+                        f'PR #{pr_number} has been merged',
+                        product_goal,
+                        'Done')
+                    changes_made += 1
+        # If not yet merged, stay in pr_ready (wait for next cycle)
         continue
 
     # Only stamp and act if the task needs action (not just running)
