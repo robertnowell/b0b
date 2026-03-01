@@ -23,6 +23,7 @@ _infer_next_step() {
     testing)       echo "Will create PR on test pass" ;;
     pr_creating)   echo "Will run automated reviews" ;;
     reviewing)     echo "Awaiting human review" ;;
+    pr_ready)      echo "Awaiting human merge" ;;
     merged)        echo "Done" ;;
     needs_split)   echo "Needs manual split into subtasks" ;;
     failed)        echo "Needs investigation" ;;
