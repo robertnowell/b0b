@@ -11,7 +11,6 @@
 #     [--model <model>] \
 #     [--phase planning] \
 #     [--require-plan-review true|false]
-#     [--workspace]
 #
 # What it does:
 #   1. Validates inputs
@@ -46,7 +45,6 @@ MODEL=""
 PHASE="planning"
 REQUIRE_PLAN_REVIEW="true"
 USER_REQUEST=""
-WORKSPACE="false"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -60,7 +58,6 @@ while [[ $# -gt 0 ]]; do
     --phase)                [[ $# -ge 2 ]] || { echo "ERROR: --phase requires a value" >&2; exit 1; };                PHASE="$2"; shift 2 ;;
     --require-plan-review)  [[ $# -ge 2 ]] || { echo "ERROR: --require-plan-review requires a value" >&2; exit 1; };  REQUIRE_PLAN_REVIEW="$2"; shift 2 ;;
     --user-request)         [[ $# -ge 2 ]] || { echo "ERROR: --user-request requires a value" >&2; exit 1; };         USER_REQUEST="$2"; shift 2 ;;
-    --workspace)            WORKSPACE="true"; shift ;;
     *) echo "ERROR: Unknown argument: $1" >&2; exit 1 ;;
   esac
 done
@@ -153,16 +150,12 @@ if [ -n "$USER_REQUEST" ]; then
   SPAWN_ARGS+=(--user-request "$USER_REQUEST")
 fi
 
-if [ "$WORKSPACE" = "true" ]; then
-  SPAWN_ARGS+=(--workspace)
-fi
-
 "$SPAWN" "${SPAWN_ARGS[@]}"
 
 # --- Set requiresPlanReview on the task ---
 python3 -c "
 import json, sys, fcntl
-tasks_file, lock_file, task_id, require_review, workspace = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5]
+tasks_file, lock_file, task_id, require_review = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 fd = open(lock_file, 'w')
 fcntl.flock(fd, fcntl.LOCK_EX)
 try:
@@ -171,8 +164,6 @@ try:
     for t in tasks:
         if t['id'] == task_id:
             t['requiresPlanReview'] = require_review.lower() == 'true'
-            if workspace.lower() == 'true':
-                t['workspace'] = True
             break
     with open(tasks_file, 'w') as f:
         json.dump(tasks, f, indent=2)
@@ -180,7 +171,7 @@ try:
 finally:
     fcntl.flock(fd, fcntl.LOCK_UN)
     fd.close()
-" "$TASKS_FILE" "$LOCK_FILE" "$TASK_ID" "$REQUIRE_PLAN_REVIEW" "$WORKSPACE"
+" "$TASKS_FILE" "$LOCK_FILE" "$TASK_ID" "$REQUIRE_PLAN_REVIEW"
 
 # --- Send Slack notification ---
 notify \

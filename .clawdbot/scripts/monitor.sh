@@ -41,7 +41,7 @@ CHECK_OUTPUT=$("$CHECK" 2>/dev/null) || {
 
 # Step 2: Process each task with the state machine
 python3 -c "
-import json, sys, subprocess, os, fcntl
+import json, sys, subprocess, os, fcntl, re
 
 script_dir = sys.argv[1]
 tasks_file = sys.argv[2]
@@ -54,11 +54,9 @@ spawn = sys.argv[8]
 log_dir = sys.argv[9]
 fill_template = sys.argv[10]
 plans_dir = sys.argv[11]
-workspace_repo = sys.argv[12]
-workspace_worktree_base = sys.argv[13]
-max_auto_retries = int(sys.argv[14])
-max_split_depth = int(sys.argv[15])
-max_auto_split_attempts = int(sys.argv[16])
+max_auto_retries = int(sys.argv[12])
+max_split_depth = int(sys.argv[13])
+max_auto_split_attempts = int(sys.argv[14])
 
 check_output = json.loads(sys.stdin.read())
 
@@ -69,10 +67,10 @@ _clean_env = {k: v for k, v in os.environ.items()
                         'GH_TOKEN', 'TMPDIR')}
 
 def get_task_repo(task):
-    return workspace_repo if task.get('workspace') else repo_root
+    return repo_root
 
 def get_task_worktree_base(task):
-    return workspace_worktree_base if task.get('workspace') else worktree_base
+    return worktree_base
 
 def run_notify(task_id, phase, message, product_goal='', next_step='', started_at='', plan_file=''):
     \"\"\"Send a Slack notification. Pipes message via stdin to avoid ARG_MAX.\"\"\"
@@ -130,6 +128,15 @@ def apply_updates(task_id, updates):
         fcntl.flock(fd, fcntl.LOCK_UN)
         fd.close()
 
+def extract_structured_verdict(content, verdict_key):
+    \"\"\"Extract PASS/FAIL from a structured verdict line, allowing light formatting wrappers.\"\"\"
+    pattern = re.compile(rf'\\b{re.escape(verdict_key)}\\s*:\\s*(PASS|FAIL)\\b', re.IGNORECASE)
+    for line in reversed(content.split('\n')):
+        match = pattern.search(line.strip())
+        if match:
+            return match.group(1).lower()
+    return None
+
 def get_audit_result(task):
     \"\"\"Parse the agent's log for structured AUDIT_VERDICT line.\"\"\"
     log_file = task.get('logFile', '')
@@ -140,19 +147,14 @@ def get_audit_result(task):
         content = f.read()
 
     # Look for structured verdict line: AUDIT_VERDICT:PASS or AUDIT_VERDICT:FAIL
-    verdict = None
-    for line in reversed(content.split('\n')):
-        stripped = line.strip()
-        if stripped.startswith('AUDIT_VERDICT:'):
-            verdict = stripped.split(':', 1)[1].strip().lower()
-            break
+    verdict = extract_structured_verdict(content, 'AUDIT_VERDICT')
 
     # Extract findings summary from the tail
     tail = content[-2000:] if len(content) > 2000 else content
     findings_summary = ''
     for line in tail.split('\n'):
         stripped = line.strip()
-        if stripped and not stripped.startswith('AGENT_') and not stripped.startswith('AUDIT_VERDICT:'):
+        if stripped and not stripped.startswith('AGENT_') and 'AUDIT_VERDICT:' not in stripped.upper():
             findings_summary = stripped
 
     if verdict == 'pass':
@@ -173,19 +175,14 @@ def get_test_result(task):
         content = f.read()
 
     # Look for structured verdict line: TEST_VERDICT:PASS or TEST_VERDICT:FAIL
-    verdict = None
-    for line in reversed(content.split('\n')):
-        stripped = line.strip()
-        if stripped.startswith('TEST_VERDICT:'):
-            verdict = stripped.split(':', 1)[1].strip().lower()
-            break
+    verdict = extract_structured_verdict(content, 'TEST_VERDICT')
 
     # Extract summary from the tail
     tail = content[-2000:] if len(content) > 2000 else content
     findings_summary = ''
     for line in tail.split('\n'):
         stripped = line.strip()
-        if stripped and not stripped.startswith('AGENT_') and not stripped.startswith('TEST_VERDICT:'):
+        if stripped and not stripped.startswith('AGENT_') and 'TEST_VERDICT:' not in stripped.upper():
             findings_summary = stripped
 
     if verdict == 'pass':
@@ -362,8 +359,6 @@ def spawn_agent(task, phase, prompt_template, agent_override=None):
         '--description', description,
         '--product-goal', product_goal,
     ]
-    if task.get('workspace'):
-        cmd.append('--workspace')
     task_repo = get_task_repo(task)
     result = subprocess.run(cmd, capture_output=True, text=True, cwd=task_repo)
     if result.returncode != 0:
@@ -593,8 +588,6 @@ for task in tasks:
                             '--phase', 'planning',
                             '--require-plan-review', 'false',
                         ]
-                        if task.get('workspace'):
-                            dispatch_cmd.append('--workspace')
                         d_result = subprocess.run(dispatch_cmd, capture_output=True, text=True,
                                                   cwd=get_task_repo(task), env=_clean_env)
                         if d_result.returncode == 0:
@@ -1149,6 +1142,6 @@ for task in tasks:
     # running tasks in non-terminal phases: no action needed (wait for completion)
 
 print(json.dumps({'processed': len(task_map), 'changes_made': changes_made}, indent=2))
-" "$SCRIPT_DIR" "$TASKS_FILE" "$LOCK_FILE" "$REPO_ROOT" "$WORKTREE_BASE" "$MAX_ITERATIONS" "$NOTIFY" "$SPAWN" "$LOG_DIR" "$FILL_TEMPLATE" "$PLANS_DIR" "$WORKSPACE_REPO" "$WORKSPACE_WORKTREE_BASE" "$MAX_AUTO_RETRIES" "$MAX_SPLIT_DEPTH" "$MAX_AUTO_SPLIT_ATTEMPTS" <<< "$CHECK_OUTPUT"
+" "$SCRIPT_DIR" "$TASKS_FILE" "$LOCK_FILE" "$REPO_ROOT" "$WORKTREE_BASE" "$MAX_ITERATIONS" "$NOTIFY" "$SPAWN" "$LOG_DIR" "$FILL_TEMPLATE" "$PLANS_DIR" "$MAX_AUTO_RETRIES" "$MAX_SPLIT_DEPTH" "$MAX_AUTO_SPLIT_ATTEMPTS" <<< "$CHECK_OUTPUT"
 
 log "=== Monitor run completed ==="

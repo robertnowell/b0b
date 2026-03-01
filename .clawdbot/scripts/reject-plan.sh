@@ -88,7 +88,6 @@ else
   AGENT=$(echo "$TASK_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('agent','claude'))")
   DESCRIPTION=$(echo "$TASK_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('description',''))")
   PRODUCT_GOAL=$(echo "$TASK_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('productGoal',''))")
-  IS_WORKSPACE=$(echo "$TASK_JSON" | python3 -c "import json,sys; print('true' if json.load(sys.stdin).get('workspace') else 'false')")
   ITERATION=$(echo "$TASK_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('iteration',0))")
 
   # Increment iteration
@@ -161,9 +160,6 @@ finally:
     --phase planning
     --description "$DESCRIPTION"
     --product-goal "$PRODUCT_GOAL")
-  if [ "$IS_WORKSPACE" = "true" ]; then
-    SPAWN_ARGS+=(--workspace)
-  fi
   "$SPAWN" "${SPAWN_ARGS[@]}"
 
   notify --task-id "$TASK_ID" --phase "planning" \

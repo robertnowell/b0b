@@ -27,10 +27,8 @@ repo_root = sys.argv[1]
 tasks_file = sys.argv[2]
 lock_file = sys.argv[3]
 max_runtime = int(sys.argv[4])
-workspace_repo = sys.argv[6]
-
 def get_task_repo(task):
-    return workspace_repo if task.get('workspace') else repo_root
+    return repo_root
 
 lock_fd = open(lock_file, 'w')
 fcntl.flock(lock_fd, fcntl.LOCK_EX)
@@ -208,4 +206,4 @@ output = {
     }
 }
 print(json.dumps(output, indent=2))
-" "$REPO_ROOT" "$TASKS_FILE" "$LOCK_FILE" "$MAX_RUNTIME_SECONDS" "$MAX_ITERATIONS" "$WORKSPACE_REPO"
+" "$REPO_ROOT" "$TASKS_FILE" "$LOCK_FILE" "$MAX_RUNTIME_SECONDS" "$MAX_ITERATIONS"
