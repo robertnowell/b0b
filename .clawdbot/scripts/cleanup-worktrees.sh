@@ -17,10 +17,8 @@ repo_root = sys.argv[1]
 tasks_file = sys.argv[2]
 worktree_base = sys.argv[3]
 lock_file = sys.argv[4]
-workspace_repo = sys.argv[5]
-
 def get_task_repo(task):
-    return workspace_repo if task.get('workspace') else repo_root
+    return repo_root
 
 lock_fd = open(lock_file, 'w')
 fcntl.flock(lock_fd, fcntl.LOCK_EX)
@@ -53,4 +51,4 @@ try:
 finally:
     fcntl.flock(lock_fd, fcntl.LOCK_UN)
     lock_fd.close()
-" "$REPO_ROOT" "$TASKS_FILE" "$WORKTREE_BASE" "$LOCK_FILE" "$WORKSPACE_REPO"
+" "$REPO_ROOT" "$TASKS_FILE" "$WORKTREE_BASE" "$LOCK_FILE"

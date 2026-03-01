@@ -60,8 +60,6 @@ BRANCH=$(echo "$TASK_JSON" | python3 -c "import json,sys; print(json.load(sys.st
 AGENT=$(echo "$TASK_JSON" | python3 -c "import json,sys; t=json.load(sys.stdin); print(sys.argv[1] if sys.argv[1] else t.get('agent','claude'))" "$AGENT_OVERRIDE")
 DESCRIPTION=$(echo "$TASK_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('description',''))")
 PRODUCT_GOAL=$(echo "$TASK_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('productGoal',''))")
-IS_WORKSPACE=$(echo "$TASK_JSON" | python3 -c "import json,sys; print('true' if json.load(sys.stdin).get('workspace') else 'false')")
-
 # Read plan content
 PLAN_FILE="${PLANS_DIR}/${TASK_ID}.md"
 if [ ! -f "$PLAN_FILE" ]; then
@@ -90,9 +88,6 @@ SPAWN_ARGS=("$TASK_ID" "$BRANCH" "$AGENT" "$FILLED_PROMPT" ""
   --phase implementing
   --description "$DESCRIPTION"
   --product-goal "$PRODUCT_GOAL")
-if [ "$IS_WORKSPACE" = "true" ]; then
-  SPAWN_ARGS+=(--workspace)
-fi
 "$SPAWN" "${SPAWN_ARGS[@]}"
 
 # Update task — carry planContent through

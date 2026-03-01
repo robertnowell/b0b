@@ -25,7 +25,6 @@ TASK_DESCRIPTION=""
 PRODUCT_GOAL=""
 USER_REQUEST=""
 TASK_PHASE="implementing"
-WORKSPACE="false"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -41,8 +40,6 @@ while [[ $# -gt 0 ]]; do
     --phase)
       [[ $# -ge 2 ]] || { echo "ERROR: --phase requires a value" >&2; exit 1; }
       TASK_PHASE="$2"; shift 2 ;;
-    --workspace)
-      WORKSPACE="true"; shift ;;
     *)
       POSITIONAL_ARGS+=("$1"); shift ;;
   esac
@@ -62,9 +59,7 @@ if [ -n "$MODEL" ]; then
   [[ "$MODEL" =~ ^[a-zA-Z0-9._-]+$ ]] || { echo "ERROR: Invalid model name (only [a-zA-Z0-9._-] allowed)"; exit 1; }
 fi
 
-# Resolve repo + worktree paths based on --workspace flag
-eval "$(get_task_paths "$WORKSPACE")"
-WORKTREE_DIR="${EFFECTIVE_WORKTREE_BASE}/${TASK_ID}"
+WORKTREE_DIR="${WORKTREE_BASE}/${TASK_ID}"
 TMUX_SESSION="agent-${TASK_ID}"
 LOG_FILE="${LOG_DIR}/agent-${TASK_ID}.log"
 
@@ -87,7 +82,7 @@ PROMPT_FILE="$(cd "$(dirname "$PROMPT_FILE")" && pwd)/$(basename "$PROMPT_FILE")
 mkdir -p "$(dirname "$WORKTREE_DIR")"
 
 # Create worktree
-cd "$EFFECTIVE_REPO"
+cd "$REPO_ROOT"
 git fetch origin main --quiet 2>/dev/null || true
 
 if [ ! -d "$WORKTREE_DIR" ]; then
@@ -115,18 +110,15 @@ WRAPPER="/tmp/agent-${TASK_ID}-run.sh"
   printf 'AGENT_MODEL=%q\n' "${MODEL:-claude-opus-4-6}"
   printf 'AGENT_CLAUDE_PATH=%q\n' "$CLAUDE_PATH"
   printf 'AGENT_CODEX_PATH=%q\n' "$CODEX_PATH"
-  printf 'WORKSPACE_TASK=%q\n' "$WORKSPACE"
   cat <<'SCRIPT_BODY'
 cd "$AGENT_WORKTREE_DIR"
-if [ "$WORKSPACE_TASK" != "true" ]; then
+if [ -f "package.json" ]; then
   if ! pnpm install --frozen-lockfile 2>&1 | tee -a "$AGENT_LOG_FILE"; then
     echo 'AGENT_FAIL:deps_install' >> "$AGENT_LOG_FILE"
     echo 'AGENT_DONE' >> "$AGENT_LOG_FILE"
     exit 1
   fi
   echo '=== DEPS INSTALLED ===' >> "$AGENT_LOG_FILE"
-else
-  echo '=== WORKSPACE TASK — SKIPPING DEPS ===' >> "$AGENT_LOG_FILE"
 fi
 if [ "$AGENT_TYPE" = "codex" ]; then
   "$AGENT_CODEX_PATH" exec --dangerously-bypass-approvals-and-sandbox < "$AGENT_PROMPT_FILE" 2>&1 | tee -a "$AGENT_LOG_FILE"
@@ -167,7 +159,6 @@ max_iterations = int(sys.argv[11])
 description = sys.argv[12]
 product_goal = sys.argv[13]
 user_request = sys.argv[14]
-workspace = sys.argv[15].lower() == 'true'
 
 lock_fd = open(lock_file, 'w')
 fcntl.flock(lock_fd, fcntl.LOCK_EX)
@@ -192,7 +183,6 @@ try:
         findings = existing.get('findings', [])
         fix_target = existing.get('fixTarget', 'auditing')
         require_plan_review = existing.get('requiresPlanReview', True)
-        workspace = existing.get('workspace', workspace)
         tasks = [t for t in tasks if t.get('id') != task_id]
 
     entry = {
@@ -214,8 +204,6 @@ try:
         'requiresPlanReview': require_plan_review,
         'userRequest': user_request,
     }
-    if workspace:
-        entry['workspace'] = True
     tasks.append(entry)
 
     with open(tasks_file, 'w') as f:
@@ -224,7 +212,7 @@ try:
 finally:
     fcntl.flock(lock_fd, fcntl.LOCK_UN)
     lock_fd.close()
-" "$TASKS_FILE" "$LOCK_FILE" "$TASK_ID" "$BRANCH" "$AGENT" "$TMUX_SESSION" "$STARTED_AT" "$WORKTREE_DIR" "$LOG_FILE" "$TASK_PHASE" "$MAX_ITERATIONS" "$TASK_DESCRIPTION" "$PRODUCT_GOAL" "$USER_REQUEST" "$WORKSPACE"
+" "$TASKS_FILE" "$LOCK_FILE" "$TASK_ID" "$BRANCH" "$AGENT" "$TMUX_SESSION" "$STARTED_AT" "$WORKTREE_DIR" "$LOG_FILE" "$TASK_PHASE" "$MAX_ITERATIONS" "$TASK_DESCRIPTION" "$PRODUCT_GOAL" "$USER_REQUEST"
 
 echo "Spawned $AGENT agent"
 echo "  Task:      $TASK_ID"
