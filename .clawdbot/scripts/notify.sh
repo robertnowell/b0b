@@ -48,7 +48,7 @@ _relative_time() {
 }
 
 notify() {
-  local task_id="" phase="" message="" product_goal="" channel="" next_step="" started_at=""
+  local task_id="" phase="" message="" product_goal="" channel="" next_step="" started_at="" plan_file=""
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -59,6 +59,7 @@ notify() {
       --channel)      channel="$2"; shift 2 ;;
       --next)         next_step="$2"; shift 2 ;;
       --started-at)   started_at="$2"; shift 2 ;;
+      --plan-file)    plan_file="$2"; shift 2 ;;
       *) echo "ERROR: Unknown flag: $1" >&2; return 1 ;;
     esac
   done
@@ -105,8 +106,11 @@ entry = {'task_id': sys.argv[1], 'phase': sys.argv[2], 'message': msg, 'product_
 # For plan_review, include planFile path so Kopiclaw can post the full plan
 if sys.argv[2] == 'plan_review':
     entry['requiresFullPlanPost'] = True
+plan_file = sys.argv[5] if len(sys.argv) > 5 else ''
+if plan_file:
+    entry['planFile'] = plan_file
 print(json.dumps(entry))
-" "$task_id" "$phase" "${product_goal:-}" "$next_step" <<< "${message}
+" "$task_id" "$phase" "${product_goal:-}" "$next_step" "${plan_file:-}" <<< "${message}
 ${notification}" >> "$NOTIFY_OUTBOX"
   fi
 
