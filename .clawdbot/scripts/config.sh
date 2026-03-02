@@ -2,7 +2,7 @@
 # config.sh — Shared configuration for agent pipeline scripts
 # Source this at the top of every pipeline script
 
-REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo "/Users/kopi/Projects/kopi")"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CLAWDBOT_DIR="${REPO_ROOT}/.clawdbot"
 PROMPTS_DIR="${CLAWDBOT_DIR}/prompts"
 
