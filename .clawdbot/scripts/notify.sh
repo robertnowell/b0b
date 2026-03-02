@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # notify.sh — Send Slack notifications for pipeline events
-# Usage: ./notify.sh --task-id <id> --phase <phase> --message <msg> [--product-goal <goal>] [--channel <channel>]
+# Usage: ./notify.sh --task-id <id> --phase <phase> --message <msg> [--product-goal <goal>]
 #
-# Requires SLACK_WEBHOOK_URL set in environment or config.sh.
-# If no webhook is configured, logs the notification to stdout and exits 0.
+# Delivery: SLACK_BOT_TOKEN via Slack API (chat.postMessage) to specific channels.
+# If not configured, logs the notification to stdout and exits 0.
 
 # Source shared config
 # shellcheck source=config.sh
@@ -47,8 +47,61 @@ _format_age() {
   fi
 }
 
+_slack_bot_post() {
+  # Post a message to a Slack channel via bot token
+  # Usage: _slack_bot_post <channel_id> <<< "message text"
+  local channel="$1"
+  local text
+  text="$(cat)"
+
+  [[ -n "${SLACK_BOT_TOKEN:-}" ]] || return 1
+
+  local http_code
+  http_code=$(python3 -c "
+import json, sys
+text = sys.stdin.read()
+if len(text) > 39000:
+    text = text[:39000] + '\n\n_(truncated — see plan file for full text)_'
+payload = {'channel': sys.argv[1], 'text': text, 'unfurl_links': False, 'unfurl_media': False}
+print(json.dumps(payload))
+" "$channel" <<< "$text" | curl -s -o /dev/null -w '%{http_code}' \
+    -X POST \
+    -H "Authorization: Bearer ${SLACK_BOT_TOKEN}" \
+    -H 'Content-type: application/json; charset=utf-8' \
+    --data @- \
+    'https://slack.com/api/chat.postMessage')
+
+  if [ "$http_code" -ge 200 ] && [ "$http_code" -lt 300 ]; then
+    echo "[notify] Slack bot post to ${channel} (HTTP ${http_code})"
+  else
+    echo "[notify] WARNING: Slack bot post to ${channel} failed (HTTP ${http_code})" >&2
+    return 1
+  fi
+}
+
+_post_plan_to_slack() {
+  # Post the full plan to #project-kopi-claw with @mention
+  local task_id="$1" plan_text="$2" product_goal="$3"
+
+  [[ -n "${SLACK_BOT_TOKEN:-}" ]] || {
+    echo "[notify] No SLACK_BOT_TOKEN — skipping plan post to #project-kopi-claw" >&2
+    return 0
+  }
+
+  _slack_bot_post "$SLACK_PROJECT_CHANNEL" <<EOF
+:clipboard: *Plan ready for review:* \`${task_id}\`
+:package: *Goal:* ${product_goal:-N/A}
+
+<@${SLACK_REVIEW_USER}> — please review and run \`approve-plan.sh ${task_id}\` to proceed.
+
+---
+
+${plan_text}
+EOF
+}
+
 notify() {
-  local task_id="" phase="" message="" product_goal="" channel="" next_step="" started_at="" plan_file=""
+  local task_id="" phase="" message="" product_goal="" next_step="" started_at="" plan_file=""
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -56,7 +109,6 @@ notify() {
       --phase)        phase="$2"; shift 2 ;;
       --message)      if [[ "$2" == "-" ]]; then message="$(cat)"; else message="$2"; fi; shift 2 ;;
       --product-goal) product_goal="$2"; shift 2 ;;
-      --channel)      channel="$2"; shift 2 ;;
       --next)         next_step="$2"; shift 2 ;;
       --started-at)   started_at="$2"; shift 2 ;;
       --plan-file)    plan_file="$2"; shift 2 ;;
@@ -95,54 +147,16 @@ EOF
   # Log to stdout regardless
   echo "[notify] ${task_id} (${phase}): ${message}"
 
-  # Append to outbox for Kopiclaw to relay via Slack
-  if [ -n "${NOTIFY_OUTBOX:-}" ]; then
-    python3 -c "
-import json, sys
-lines = sys.stdin.read().split('\n', 1)
-msg = lines[0]
-notif = lines[1] if len(lines) > 1 else ''
-entry = {'task_id': sys.argv[1], 'phase': sys.argv[2], 'message': msg, 'product_goal': sys.argv[3], 'next_step': sys.argv[4], 'text': notif}
-# For plan_review, include planFile path so Kopiclaw can post the full plan
-if sys.argv[2] == 'plan_review':
-    entry['requiresFullPlanPost'] = True
-plan_file = sys.argv[5] if len(sys.argv) > 5 else ''
-if plan_file:
-    entry['planFile'] = plan_file
-started_at = sys.argv[6] if len(sys.argv) > 6 else ''
-if started_at:
-    entry['started_at'] = started_at
-print(json.dumps(entry))
-" "$task_id" "$phase" "${product_goal:-}" "$next_step" "${plan_file:-}" "${started_at:-}" <<< "${message}
-${notification}" >> "$NOTIFY_OUTBOX"
+  # Send to #alerts-kopi-claw via bot token
+  if [ -n "${SLACK_BOT_TOKEN:-}" ]; then
+    _slack_bot_post "$SLACK_ALERTS_CHANNEL" <<< "$notification"
+  else
+    echo "[notify] No SLACK_BOT_TOKEN configured — skipping Slack delivery" >&2
   fi
 
-  # Send to Slack if webhook is configured
-  if [ -n "${SLACK_WEBHOOK_URL:-}" ]; then
-    local payload http_code
-    payload=$(python3 -c "
-import json, sys
-notif = sys.stdin.read()
-channel = sys.argv[1]
-payload = {'text': notif}
-if channel:
-    payload['channel'] = channel
-print(json.dumps(payload))
-" "$channel" <<< "$notification")
-
-    http_code=$(echo "$payload" | curl -s -o /dev/null -w '%{http_code}' \
-      -X POST \
-      -H 'Content-type: application/json' \
-      --data @- \
-      "$SLACK_WEBHOOK_URL")
-
-    if [ "$http_code" -ge 200 ] && [ "$http_code" -lt 300 ]; then
-      echo "[notify] Slack notification sent (HTTP ${http_code})"
-    else
-      echo "[notify] WARNING: Slack notification failed (HTTP ${http_code})" >&2
-    fi
-  else
-    echo "[notify] No SLACK_WEBHOOK_URL configured — skipping Slack delivery" >&2
+  # For plan_review: post full plan to #project-kopi-claw with @mention
+  if [ "$phase" = "plan_review" ]; then
+    _post_plan_to_slack "$task_id" "$message" "$product_goal"
   fi
 }
 

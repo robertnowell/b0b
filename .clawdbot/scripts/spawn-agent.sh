@@ -177,17 +177,18 @@ try:
     iteration = 0
     findings = []
     fix_target = 'auditing'
-    require_plan_review = True
+    require_plan_review = False
     auto_retry_count = 0
     auto_split_attempt_count = 0
     split_depth = 0
     parent_task = None
+    workspace = False
     created_at = started_at
     if existing:
         iteration = existing.get('iteration', 0)
         findings = existing.get('findings', [])
         fix_target = existing.get('fixTarget', 'auditing')
-        require_plan_review = existing.get('requiresPlanReview', True)
+        require_plan_review = existing.get('requiresPlanReview', False)
         auto_retry_count = existing.get('autoRetryCount', 0)
         auto_split_attempt_count = existing.get('autoSplitAttemptCount', 0)
         split_depth = existing.get('splitDepth', 0)

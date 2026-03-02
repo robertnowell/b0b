@@ -63,7 +63,7 @@ check_output = json.loads(sys.stdin.read())
 # Minimal environment for subprocess calls to avoid ARG_MAX from env bloat
 _clean_env = {k: v for k, v in os.environ.items()
               if k in ('PATH', 'HOME', 'USER', 'SHELL', 'TERM', 'LANG', 'LC_ALL',
-                        'SLACK_WEBHOOK_URL', 'CLAWDBOT_SLACK_WEBHOOK', 'GITHUB_TOKEN',
+                        'SLACK_BOT_TOKEN', 'GITHUB_TOKEN',
                         'GH_TOKEN', 'TMPDIR')}
 
 def get_task_repo(task):
@@ -536,11 +536,13 @@ for task in tasks:
 
         if should_retry:
             new_retry_count = auto_retry_count + 1
-            preserved_findings = task.get('findings', []) + [f'Auto-retry #{new_retry_count} triggered']
+            prev_findings = task.get('findings', [])
+            preserved_findings = prev_findings + [f'Auto-retry #{new_retry_count} triggered']
+            prev_count = len(prev_findings)
             run_notify(tid, 'planning',
                 f'Auto-retrying from needs_split (retry {new_retry_count}/{max_auto_retries}). Previous findings preserved.',
                 product_goal,
-                f'Re-planning with context from {len(task.get("findings", []))} previous findings')
+                f'Re-planning with context from {prev_count} previous findings')
             task['iteration'] = 0
             task['autoRetryCount'] = new_retry_count
             task['findings'] = preserved_findings
@@ -882,7 +884,7 @@ for task in tasks:
             # Check plan output and decide: plan_review gate or auto-advance
             plan_status, plan_summary, plan_content, plan_file = get_plan_result(task)
             if plan_status == 'ready':
-                requires_review = task.get('requiresPlanReview', True)
+                requires_review = task.get('requiresPlanReview', False)
                 if requires_review:
                     # Human gate — park in plan_review
                     apply_updates(tid, {
