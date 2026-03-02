@@ -71,7 +71,7 @@ check_output = json.loads(sys.stdin.read())
 _clean_env = {k: v for k, v in os.environ.items()
               if k in ('PATH', 'HOME', 'USER', 'SHELL', 'TERM', 'LANG', 'LC_ALL',
                         'SLACK_BOT_TOKEN', 'GITHUB_TOKEN',
-                        'GH_TOKEN', 'TMPDIR')}
+                        'GH_TOKEN', 'TMPDIR', 'CLAWDBOT_STATE_DIR')}
 
 def get_task_repo(task):
     return repo_root
@@ -531,7 +531,7 @@ for task in tasks:
                     checks = prs[0].get('statusCheckRollup', [])
                     ci_pass = checks and all((c.get('conclusion') or c.get('state', '')).upper() == 'SUCCESS' for c in checks)
         if pr_number and ci_pass:
-            apply_updates(tid, {'phase': 'pr_ready', 'status': 'pr_ready', 'prNumber': pr_number})
+            apply_updates(tid, {'phase': 'pr_ready', 'status': 'pr_ready', 'prNumber': pr_number, 'conflictFixCount': 0})
             run_notify(tid, 'pr_ready',
                 f'PR #{pr_number} passed CI — ready for human review',
                 product_goal,
@@ -545,18 +545,27 @@ for task in tasks:
             if merge_result.returncode == 0 and merge_result.stdout.strip():
                 mergeable = json.loads(merge_result.stdout).get('mergeable', '')
                 if mergeable == 'CONFLICTING':
-                    dispatch_fix = os.path.join(script_dir, 'dispatch-fix.sh')
-                    fix_result = subprocess.run(
-                        [dispatch_fix, '--task-id', tid,
-                         '--feedback', 'PR has merge conflicts with main. Resolve conflicts, commit, and push.'],
-                        capture_output=True, text=True, cwd=task_repo, env=_clean_env)
-                    if fix_result.returncode == 0:
-                        run_notify(tid, 'fixing',
-                            f'PR #{pr_number} has merge conflicts. Auto-dispatching fix agent.',
+                    conflict_fix_count = task.get('conflictFixCount', 0)
+                    if conflict_fix_count >= 2:
+                        print(f'WARNING: {tid} has had {conflict_fix_count} conflict fix attempts — needs human intervention')
+                        run_notify(tid, phase,
+                            f'PR #{pr_number} still has merge conflicts after {conflict_fix_count} fix attempts. Needs manual resolution.',
                             product_goal,
-                            'Resolving merge conflicts')
+                            'Manual conflict resolution needed')
                     else:
-                        print(f'WARNING: dispatch-fix.sh failed for {tid} merge conflicts: {fix_result.stderr}')
+                        dispatch_fix = os.path.join(script_dir, 'dispatch-fix.sh')
+                        fix_result = subprocess.run(
+                            [dispatch_fix, '--task-id', tid,
+                             '--feedback', 'PR has merge conflicts with main. Resolve conflicts, commit, and push.'],
+                            capture_output=True, text=True, cwd=task_repo, env=_clean_env)
+                        if fix_result.returncode == 0:
+                            apply_updates(tid, {'conflictFixCount': conflict_fix_count + 1})
+                            run_notify(tid, 'fixing',
+                                f'PR #{pr_number} has merge conflicts. Auto-dispatching fix agent.',
+                                product_goal,
+                                'Resolving merge conflicts')
+                        else:
+                            print(f'WARNING: dispatch-fix.sh failed for {tid} merge conflicts: {fix_result.stderr}')
                     changes_made += 1
         # If no PR or CI not passing yet, stay in reviewing (wait for next cycle)
         continue
@@ -594,19 +603,28 @@ for task in tasks:
                         'Done')
                     changes_made += 1
                 elif pr_data.get('mergeable', '') == 'CONFLICTING':
-                    # PR has merge conflicts — dispatch fix agent
-                    dispatch_fix = os.path.join(script_dir, 'dispatch-fix.sh')
-                    fix_result = subprocess.run(
-                        [dispatch_fix, '--task-id', tid,
-                         '--feedback', 'PR has merge conflicts with main. Resolve conflicts, commit, and push.'],
-                        capture_output=True, text=True, cwd=task_repo, env=_clean_env)
-                    if fix_result.returncode == 0:
-                        run_notify(tid, 'fixing',
-                            f'PR #{pr_number} has merge conflicts. Auto-dispatching fix agent.',
+                    # PR has merge conflicts — dispatch fix agent (with retry guard)
+                    conflict_fix_count = task.get('conflictFixCount', 0)
+                    if conflict_fix_count >= 2:
+                        print(f'WARNING: {tid} has had {conflict_fix_count} conflict fix attempts — needs human intervention')
+                        run_notify(tid, phase,
+                            f'PR #{pr_number} still has merge conflicts after {conflict_fix_count} fix attempts. Needs manual resolution.',
                             product_goal,
-                            'Resolving merge conflicts')
+                            'Manual conflict resolution needed')
                     else:
-                        print(f'WARNING: dispatch-fix.sh failed for {tid} merge conflicts: {fix_result.stderr}')
+                        dispatch_fix = os.path.join(script_dir, 'dispatch-fix.sh')
+                        fix_result = subprocess.run(
+                            [dispatch_fix, '--task-id', tid,
+                             '--feedback', 'PR has merge conflicts with main. Resolve conflicts, commit, and push.'],
+                            capture_output=True, text=True, cwd=task_repo, env=_clean_env)
+                        if fix_result.returncode == 0:
+                            apply_updates(tid, {'conflictFixCount': conflict_fix_count + 1})
+                            run_notify(tid, 'fixing',
+                                f'PR #{pr_number} has merge conflicts. Auto-dispatching fix agent.',
+                                product_goal,
+                                'Resolving merge conflicts')
+                        else:
+                            print(f'WARNING: dispatch-fix.sh failed for {tid} merge conflicts: {fix_result.stderr}')
                     changes_made += 1
         # If not yet merged, stay in pr_ready (wait for next cycle)
         continue
