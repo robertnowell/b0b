@@ -489,6 +489,27 @@ for task in tasks:
                 product_goal,
                 'Merge when ready')
             changes_made += 1
+        elif pr_number and not ci_pass:
+            # Check for merge conflicts while waiting for CI
+            merge_result = subprocess.run(
+                ['gh', 'pr', 'view', str(pr_number), '--json', 'mergeable'],
+                capture_output=True, text=True, cwd=task_repo)
+            if merge_result.returncode == 0 and merge_result.stdout.strip():
+                mergeable = json.loads(merge_result.stdout).get('mergeable', '')
+                if mergeable == 'CONFLICTING':
+                    dispatch_fix = os.path.join(script_dir, 'dispatch-fix.sh')
+                    fix_result = subprocess.run(
+                        [dispatch_fix, '--task-id', tid,
+                         '--feedback', 'PR has merge conflicts with main. Resolve conflicts, commit, and push.'],
+                        capture_output=True, text=True, cwd=task_repo, env=_clean_env)
+                    if fix_result.returncode == 0:
+                        run_notify(tid, 'fixing',
+                            f'PR #{pr_number} has merge conflicts. Auto-dispatching fix agent.',
+                            product_goal,
+                            'Resolving merge conflicts')
+                    else:
+                        print(f'WARNING: dispatch-fix.sh failed for {tid} merge conflicts: {fix_result.stderr}')
+                    changes_made += 1
         # If no PR or CI not passing yet, stay in reviewing (wait for next cycle)
         continue
 
@@ -512,16 +533,32 @@ for task in tasks:
 
         if pr_number:
             pr_state_result = subprocess.run(
-                ['gh', 'pr', 'view', str(pr_number), '--json', 'state'],
+                ['gh', 'pr', 'view', str(pr_number), '--json', 'state,mergeable'],
                 capture_output=True, text=True, cwd=task_repo)
             if pr_state_result.returncode == 0 and pr_state_result.stdout.strip():
-                pr_state = json.loads(pr_state_result.stdout).get('state', '')
+                pr_data = json.loads(pr_state_result.stdout)
+                pr_state = pr_data.get('state', '')
                 if str(pr_state).upper() == 'MERGED':
                     apply_updates(tid, {'phase': 'merged', 'status': 'merged'})
                     run_notify(tid, 'merged',
                         f'PR #{pr_number} has been merged',
                         product_goal,
                         'Done')
+                    changes_made += 1
+                elif pr_data.get('mergeable', '') == 'CONFLICTING':
+                    # PR has merge conflicts — dispatch fix agent
+                    dispatch_fix = os.path.join(script_dir, 'dispatch-fix.sh')
+                    fix_result = subprocess.run(
+                        [dispatch_fix, '--task-id', tid,
+                         '--feedback', 'PR has merge conflicts with main. Resolve conflicts, commit, and push.'],
+                        capture_output=True, text=True, cwd=task_repo, env=_clean_env)
+                    if fix_result.returncode == 0:
+                        run_notify(tid, 'fixing',
+                            f'PR #{pr_number} has merge conflicts. Auto-dispatching fix agent.',
+                            product_goal,
+                            'Resolving merge conflicts')
+                    else:
+                        print(f'WARNING: dispatch-fix.sh failed for {tid} merge conflicts: {fix_result.stderr}')
                     changes_made += 1
         # If not yet merged, stay in pr_ready (wait for next cycle)
         continue
@@ -1095,9 +1132,16 @@ for task in tasks:
             changes_made += 1
 
         elif phase == 'fixing':
-            # Route back to auditing or testing based on fixTarget
+            # Route back based on fixTarget
             fix_target = task.get('fixTarget', 'auditing')
-            if fix_target == 'testing':
+            if fix_target == 'reviewing':
+                # Post-PR feedback fix: go back to reviewing to re-check CI
+                apply_updates(tid, {'phase': 'reviewing', 'status': 'reviewing'})
+                run_notify(tid, 'reviewing',
+                    f'Fixes applied for PR feedback. Re-checking CI.',
+                    product_goal,
+                    'Awaiting CI re-check')
+            elif fix_target == 'testing':
                 run_notify(tid, 'testing',
                     f'Fixes applied. Re-running tests (iteration {iteration}/{max_iter})',
                     product_goal,
