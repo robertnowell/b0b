@@ -108,7 +108,7 @@ find_task_by_number() {
   # Find an active task matching this PR/issue number
   local number="$1"
   python3 -c "
-import json, sys
+import json, re, sys
 number = sys.argv[2]
 try:
     tasks = json.load(open(sys.argv[1]))
@@ -120,6 +120,11 @@ try:
         pr = str(t.get('prNumber', ''))
         branch = t.get('branch', '')
         if src == number or pr == number or t.get('id', '').startswith(f'gh-{number}-'):
+            print(t.get('id', ''))
+            sys.exit(0)
+        # Match branch containing the number as a discrete segment
+        # e.g. 'fix/1659-foo' matches 1659, but 'feat/16590-bar' does not
+        if re.search(rf'(?:^|[/\-_.])({re.escape(number)})(?:[/\-_.]|$)', branch):
             print(t.get('id', ''))
             sys.exit(0)
     sys.exit(1)
@@ -190,6 +195,22 @@ is_authorized_user() {
   local item
   IFS=',' read -r -a allowed_arr <<< "$allowed_csv"
   for item in "${allowed_arr[@]}"; do
+    item="${item#"${item%%[![:space:]]*}"}"
+    item="${item%"${item##*[![:space:]]}"}"
+    if [ -n "$item" ] && [ "$author" = "$item" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+is_known_bot() {
+  local author="$1"
+  local known_bots="${GH_COMMENT_KNOWN_BOTS:-}"
+  [ -z "$known_bots" ] && return 1
+  local item
+  IFS=',' read -r -a bot_arr <<< "$known_bots"
+  for item in "${bot_arr[@]}"; do
     item="${item#"${item%%[![:space:]]*}"}"
     item="${item%"${item##*[![:space:]]}"}"
     if [ -n "$item" ] && [ "$author" = "$item" ]; then
@@ -335,6 +356,12 @@ print(json.dumps({
   task_desc=$(echo "$classification" | python3 -c "import json,sys; print(json.load(sys.stdin)['taskDescription'])")
   product_goal=$(echo "$classification" | python3 -c "import json,sys; print(json.load(sys.stdin).get('productGoal',''))")
 
+  # Reclassify known bot action_requests as feedback
+  if [ "$intent" = "action_request" ] && is_known_bot "$author"; then
+    echo "Reclassifying action_request from known bot ${author} as feedback"
+    intent="feedback"
+  fi
+
   echo "Comment ${comment_id} from ${author} on #${number}: intent=${intent}"
 
   case "$intent" in
@@ -344,6 +371,43 @@ print(json.dumps({
         notify --task-id "gh-${number}" --phase "other" \
           --message "Ignored action request from unauthorized user ${author} on #${number}" \
           --next "Authorize user via GH_COMMENT_ALLOWED_USERS to enable automation"
+        continue
+      fi
+
+      # Check if there's already an active task for this PR/issue — route to it
+      existing_task=$(find_task_by_number "$number") || existing_task=""
+      if [ -n "$existing_task" ]; then
+        echo "Active task ${existing_task} found for #${number} — routing as feedback instead of new task"
+        append_finding "$existing_task" "GitHub action request from ${author} on #${number}: ${task_desc}"
+        add_reaction "$comment_id" "$comment_type" "+1"
+
+        # Spawn fix agent if task is in a fixable phase
+        task_phase=$(python3 -c "
+import json, sys
+tasks = json.load(open(sys.argv[1]))
+task = next((t for t in tasks if t.get('id') == sys.argv[2]), None)
+print(task.get('phase', '') if task else '')
+" "$TASKS_FILE" "$existing_task" 2>/dev/null) || task_phase=""
+
+        FIXABLE_PHASES="reviewing pr_ready"
+        if echo "$FIXABLE_PHASES" | grep -qw "$task_phase"; then
+          if [ "$dispatch_count" -lt "$MAX_DISPATCHES_PER_CYCLE" ]; then
+            echo "Spawning fix agent for existing task ${existing_task}"
+            DISPATCH_FIX="${SCRIPT_DIR}/dispatch-fix.sh"
+            "$DISPATCH_FIX" \
+              --task-id "$existing_task" \
+              --feedback "GitHub action request from ${author} on #${number}: ${task_desc}" || {
+              echo "WARNING: dispatch-fix.sh failed for ${existing_task}"
+            }
+            add_reaction "$comment_id" "$comment_type" "rocket"
+            dispatch_count=$((dispatch_count + 1))
+          else
+            echo "WARNING: Max dispatches reached, fix for ${existing_task} deferred"
+            notify --task-id "$existing_task" --phase "feedback" \
+              --message "Action request recorded but fix agent deferred (dispatch limit)." \
+              --next "Will spawn fix agent next cycle"
+          fi
+        fi
         continue
       fi
 
@@ -400,7 +464,7 @@ print(json.dumps({
       ;;
 
     feedback)
-      if ! is_authorized_user "$author" "$ALLOWED_USERS"; then
+      if ! is_authorized_user "$author" "$ALLOWED_USERS" && ! is_known_bot "$author"; then
         echo "Skipping unauthorized feedback ${comment_id} by ${author}"
         notify --task-id "gh-${number}" --phase "other" \
           --message "Ignored feedback from unauthorized user ${author} on #${number}" \
@@ -418,6 +482,36 @@ print(json.dumps({
       echo "Appending feedback to task ${matching_task}"
       append_finding "$matching_task" "GitHub feedback from ${author} on #${number}: ${task_desc}"
       add_reaction "$comment_id" "$comment_type" "+1"
+
+      # Spawn fixing agent if task is in a fixable (idle) phase
+      task_phase=$(python3 -c "
+import json, sys
+tasks = json.load(open(sys.argv[1]))
+task = next((t for t in tasks if t.get('id') == sys.argv[2]), None)
+print(task.get('phase', '') if task else '')
+" "$TASKS_FILE" "$matching_task" 2>/dev/null) || task_phase=""
+
+      FIXABLE_PHASES="reviewing pr_ready"
+      if echo "$FIXABLE_PHASES" | grep -qw "$task_phase"; then
+        if [ "$dispatch_count" -ge "$MAX_DISPATCHES_PER_CYCLE" ]; then
+          echo "WARNING: Max dispatches reached, feedback fix for ${matching_task} deferred"
+          notify --task-id "$matching_task" --phase "feedback" \
+            --message "Feedback recorded but fix agent deferred (dispatch limit). Will process next cycle." \
+            --next "Will spawn fix agent next cycle"
+        else
+          echo "Spawning fix agent for feedback on task ${matching_task}"
+          DISPATCH_FIX="${SCRIPT_DIR}/dispatch-fix.sh"
+          "$DISPATCH_FIX" \
+            --task-id "$matching_task" \
+            --feedback "GitHub feedback from ${author} on #${number}: ${task_desc}" || {
+            echo "WARNING: dispatch-fix.sh failed for ${matching_task}"
+          }
+          add_reaction "$comment_id" "$comment_type" "rocket"
+          dispatch_count=$((dispatch_count + 1))
+        fi
+      else
+        echo "Task ${matching_task} in phase ${task_phase} — feedback recorded, no fix agent spawned"
+      fi
       ;;
 
     approval)

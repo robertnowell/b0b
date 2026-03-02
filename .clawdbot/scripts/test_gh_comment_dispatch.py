@@ -101,8 +101,13 @@ class TestGhCommentDispatch(unittest.TestCase):
             self.scripts / "notify.sh",
             "#!/usr/bin/env bash\nnotify(){ echo \"$*\" >> \"${NOTIFY_LOG:?}\"; }\n",
         )
+        write_exec(
+            self.scripts / "dispatch-fix.sh",
+            "#!/usr/bin/env bash\nset -euo pipefail\necho \"$*\" >> \"${DISPATCH_FIX_LOG:?}\"\n",
+        )
 
         self.dispatch_log = self.root / "dispatch.log"
+        self.dispatch_fix_log = self.root / "dispatch-fix.log"
         self.approve_log = self.root / "approve.log"
         self.reject_log = self.root / "reject.log"
         self.notify_log = self.root / "notify.log"
@@ -116,7 +121,8 @@ class TestGhCommentDispatch(unittest.TestCase):
         )
 
     def run_dispatch(self, poll_output: str, allowed_users: str = "trusted",
-                     max_dispatches: str = "3") -> subprocess.CompletedProcess:
+                     max_dispatches: str = "3",
+                     extra_env: dict = None) -> subprocess.CompletedProcess:
         env = os.environ.copy()
         env.update(
             {
@@ -127,11 +133,14 @@ class TestGhCommentDispatch(unittest.TestCase):
                 "GH_COMMENT_REQUIRE_PLAN_REVIEW": "true",
                 "POLL_OUTPUT": poll_output,
                 "DISPATCH_LOG": str(self.dispatch_log),
+                "DISPATCH_FIX_LOG": str(self.dispatch_fix_log),
                 "APPROVE_LOG": str(self.approve_log),
                 "REJECT_LOG": str(self.reject_log),
                 "NOTIFY_LOG": str(self.notify_log),
             }
         )
+        if extra_env:
+            env.update(extra_env)
         return subprocess.run(
             ["bash", str(self.scripts / "gh-comment-dispatch.sh")],
             capture_output=True,
@@ -352,6 +361,191 @@ class TestGhCommentDispatch(unittest.TestCase):
         self.assertTrue(self.dispatch_log.exists())
         dispatch_lines = self.dispatch_log.read_text(encoding="utf-8").strip().splitlines()
         self.assertEqual(len(dispatch_lines), 1)
+
+
+    # --- Gap 4: Branch-number matching ---
+
+    def test_find_task_by_branch_number(self):
+        """Gap 4: manually-created tasks matched by branch containing PR number."""
+        self._write_tasks([{
+            "id": "ios-visibility-bug",
+            "phase": "reviewing",
+            "branch": "fix/1652-ios-visibility",
+        }])
+        comment = make_comment(300, 1652, "trusted",
+                               "@kopi-claw this PR needs better error handling")
+        self.run_dispatch(comment + "\n", allowed_users="trusted")
+        tasks = json.loads(
+            (self.state / "active-tasks.json").read_text(encoding="utf-8")
+        )
+        task = next(t for t in tasks if t["id"] == "ios-visibility-bug")
+        self.assertIn("findings", task)
+        self.assertTrue(len(task["findings"]) > 0)
+
+    def test_branch_number_no_partial_match(self):
+        """Gap 4: branch '16590-something' should NOT match number 1659."""
+        self._write_tasks([{
+            "id": "unrelated-task",
+            "phase": "implementing",
+            "branch": "feat/16590-something",
+        }])
+        comment = make_comment(301, 1659, "trusted",
+                               "@kopi-claw this PR has a bug")
+        result = self.run_dispatch(comment + "\n", allowed_users="trusted")
+        self.assertIn("no matching task", result.stdout.lower())
+
+    def test_find_task_by_pr_number_field(self):
+        """Gap 4: task with prNumber but no sourceNumber is found."""
+        self._write_tasks([{
+            "id": "manual-task",
+            "phase": "reviewing",
+            "branch": "feat/custom-branch",
+            "prNumber": "1650",
+        }])
+        comment = make_comment(302, 1650, "trusted",
+                               "@kopi-claw this PR looks odd")
+        self.run_dispatch(comment + "\n", allowed_users="trusted")
+        tasks = json.loads(
+            (self.state / "active-tasks.json").read_text(encoding="utf-8")
+        )
+        task = next(t for t in tasks if t["id"] == "manual-task")
+        self.assertIn("findings", task)
+
+    # --- Gap 3: Bot reclassification ---
+
+    def test_known_bot_action_request_reclassified(self):
+        """Gap 3: known bot action_request becomes feedback — no new dispatch."""
+        self._write_tasks([{
+            "id": "gh-100-feature",
+            "phase": "implementing",
+            "sourceNumber": "100",
+        }])
+        comment = make_comment(400, 100, "kilo-code[bot]",
+                               "@kopi-claw fix the error handling")
+        self.run_dispatch(comment + "\n", allowed_users="trusted",
+                          extra_env={"GH_COMMENT_KNOWN_BOTS": "kilo-code[bot]"})
+        self.assertFalse(self.dispatch_log.exists(),
+                         "bot action_request should not trigger new dispatch")
+        tasks = json.loads(
+            (self.state / "active-tasks.json").read_text(encoding="utf-8")
+        )
+        task = next(t for t in tasks if t["id"] == "gh-100-feature")
+        self.assertTrue(any("feedback" in f.lower()
+                            for f in task.get("findings", [])))
+
+    def test_non_bot_action_request_not_reclassified(self):
+        """Gap 3: human action_request is not affected by bot reclassification."""
+        comment = make_comment(401, 200, "trusted",
+                               "@kopi-claw fix the tests")
+        self.run_dispatch(comment + "\n", allowed_users="trusted",
+                          extra_env={"GH_COMMENT_KNOWN_BOTS": "kilo-code[bot]"})
+        self.assertTrue(self.dispatch_log.exists(),
+                        "human action_request should still dispatch")
+
+    # --- Gap 1: Feedback spawns fix agent ---
+
+    def test_feedback_spawns_fix_when_reviewing(self):
+        """Gap 1: feedback on reviewing task spawns fix agent."""
+        self._write_tasks([{
+            "id": "gh-50-feature",
+            "phase": "reviewing",
+            "sourceNumber": "50",
+        }])
+        comment = make_comment(500, 50, "trusted",
+                               "@kopi-claw this PR needs better error handling")
+        self.run_dispatch(comment + "\n", allowed_users="trusted")
+        tasks = json.loads(
+            (self.state / "active-tasks.json").read_text(encoding="utf-8")
+        )
+        task = next(t for t in tasks if t["id"] == "gh-50-feature")
+        self.assertTrue(len(task.get("findings", [])) > 0)
+        self.assertTrue(self.dispatch_fix_log.exists(),
+                        "fix agent should be spawned for reviewing task")
+        fix_out = self.dispatch_fix_log.read_text(encoding="utf-8")
+        self.assertIn("gh-50-feature", fix_out)
+
+    def test_feedback_spawns_fix_when_pr_ready(self):
+        """Gap 1: feedback on pr_ready task spawns fix agent."""
+        self._write_tasks([{
+            "id": "gh-60-feature",
+            "phase": "pr_ready",
+            "sourceNumber": "60",
+        }])
+        comment = make_comment(501, 60, "trusted",
+                               "@kopi-claw this PR has a race condition")
+        self.run_dispatch(comment + "\n", allowed_users="trusted")
+        self.assertTrue(self.dispatch_fix_log.exists())
+
+    def test_feedback_no_fix_when_implementing(self):
+        """Gap 1: feedback on implementing task records but does not spawn fix."""
+        self._write_tasks([{
+            "id": "gh-70-feature",
+            "phase": "implementing",
+            "sourceNumber": "70",
+        }])
+        comment = make_comment(502, 70, "trusted",
+                               "@kopi-claw this PR could use better naming")
+        self.run_dispatch(comment + "\n", allowed_users="trusted")
+        tasks = json.loads(
+            (self.state / "active-tasks.json").read_text(encoding="utf-8")
+        )
+        task = next(t for t in tasks if t["id"] == "gh-70-feature")
+        self.assertTrue(len(task.get("findings", [])) > 0)
+        self.assertFalse(self.dispatch_fix_log.exists(),
+                         "should not spawn fix agent during active phase")
+
+    # --- Gap 3.5: Action request routes to existing task ---
+
+    def test_action_request_routes_to_existing_task(self):
+        """Gap 3.5: action_request on PR with existing task routes to it."""
+        self._write_tasks([{
+            "id": "existing-task",
+            "phase": "reviewing",
+            "sourceNumber": "1661",
+        }])
+        comment = make_comment(600, 1661, "trusted",
+                               "@kopi-claw fix the merge conflicts")
+        self.run_dispatch(comment + "\n", allowed_users="trusted")
+        self.assertFalse(self.dispatch_log.exists(),
+                         "should not create new task when existing task found")
+        tasks = json.loads(
+            (self.state / "active-tasks.json").read_text(encoding="utf-8")
+        )
+        task = next(t for t in tasks if t["id"] == "existing-task")
+        self.assertTrue(len(task.get("findings", [])) > 0)
+        self.assertTrue(self.dispatch_fix_log.exists(),
+                        "should spawn fix agent for existing reviewing task")
+
+    def test_action_request_creates_new_when_no_existing(self):
+        """Gap 3.5: action_request without existing task still creates new task."""
+        comment = make_comment(601, 9999, "trusted",
+                               "@kopi-claw add dark mode support")
+        self.run_dispatch(comment + "\n", allowed_users="trusted")
+        self.assertTrue(self.dispatch_log.exists(),
+                        "should dispatch new task when no existing task found")
+
+    # --- Gap 3 + Gap 1: Bot reclassification in fixable phase ---
+
+    def test_known_bot_reclassified_spawns_fix_when_reviewing(self):
+        """Bot feedback on a reviewing task should spawn dispatch-fix.sh."""
+        self._write_tasks([{
+            "id": "gh-100-feature",
+            "phase": "reviewing",
+            "sourceNumber": "100",
+        }])
+        comment = make_comment(402, 100, "kilo-code[bot]",
+                               "@kopi-claw fix the error handling")
+        self.run_dispatch(comment + "\n", allowed_users="trusted",
+                          extra_env={"GH_COMMENT_KNOWN_BOTS": "kilo-code[bot]"})
+        self.assertFalse(self.dispatch_log.exists(),
+                         "bot should not trigger new task dispatch")
+        tasks = json.loads(
+            (self.state / "active-tasks.json").read_text(encoding="utf-8")
+        )
+        task = next(t for t in tasks if t["id"] == "gh-100-feature")
+        self.assertTrue(len(task.get("findings", [])) > 0)
+        self.assertTrue(self.dispatch_fix_log.exists(),
+                        "bot feedback on reviewing task should spawn fix agent")
 
 
 if __name__ == "__main__":
