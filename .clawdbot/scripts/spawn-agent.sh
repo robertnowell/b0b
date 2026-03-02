@@ -172,17 +172,26 @@ try:
     else:
         tasks = []
 
-    # Check if task already exists (respawn case — preserve iteration/findings/fixTarget)
+    # Check if task already exists (respawn case — preserve execution metadata)
     existing = next((t for t in tasks if t.get('id') == task_id), None)
     iteration = 0
     findings = []
     fix_target = 'auditing'
     require_plan_review = True
+    auto_retry_count = 0
+    auto_split_attempt_count = 0
+    split_depth = 0
+    parent_task = None
     if existing:
         iteration = existing.get('iteration', 0)
         findings = existing.get('findings', [])
         fix_target = existing.get('fixTarget', 'auditing')
         require_plan_review = existing.get('requiresPlanReview', True)
+        auto_retry_count = existing.get('autoRetryCount', 0)
+        auto_split_attempt_count = existing.get('autoSplitAttemptCount', 0)
+        split_depth = existing.get('splitDepth', 0)
+        parent_task = existing.get('parentTask')
+        workspace = existing.get('workspace', False)
         tasks = [t for t in tasks if t.get('id') != task_id]
 
     entry = {
@@ -202,8 +211,15 @@ try:
         'findings': findings,
         'fixTarget': fix_target,
         'requiresPlanReview': require_plan_review,
+        'autoRetryCount': auto_retry_count,
+        'autoSplitAttemptCount': auto_split_attempt_count,
+        'splitDepth': split_depth,
         'userRequest': user_request,
     }
+    if parent_task:
+        entry['parentTask'] = parent_task
+    if workspace:
+        entry['workspace'] = True
     tasks.append(entry)
 
     with open(tasks_file, 'w') as f:

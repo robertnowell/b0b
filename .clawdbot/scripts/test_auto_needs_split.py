@@ -8,11 +8,16 @@ Covers:
   - needs_split stays terminal for deep-split tasks (splitDepth >= max)
   - Subtask no-retry (subtasks with splitDepth > 0 don't auto-retry)
   - Retry resets iteration and preserves findings
+  - Retry resets autoSplitAttemptCount to 0
   - Split creates subtask IDs with correct convention
   - Split sets parent to 'split' phase
+  - Split failure increments autoSplitAttemptCount
+  - Full lifecycle: retry -> split -> terminal
   - MAX_AUTO_RETRIES configurability
   - Race guard bypass for needs_split
   - Terminal phase list includes 'split'
+  - Superseding task phase filter (all terminal phases)
+  - Respawn metadata preservation (autoRetryCount, autoSplitAttemptCount, splitDepth, parentTask)
   - SPLIT_RESULT parsing (valid, malformed, missing)
 """
 
@@ -101,6 +106,65 @@ def parse_split_result(output):
         except (json.JSONDecodeError, TypeError):
             pass
     return []
+
+
+def get_superseding_task(tid, all_tasks):
+    """Simulate monitor.sh get_superseding_task phase filtering."""
+    match = re.match(r'^(.*?)(?:-v(\d+))?$', tid)
+    if not match:
+        return None
+    base = match.group(1)
+
+    terminal_phases = {'failed', 'split', 'merged', 'needs_split'}
+    for task in all_tasks:
+        other_id = task.get('id', '')
+        if other_id == tid:
+            continue
+        other_match = re.match(r'^(.*?)(?:-v(\d+))?$', other_id)
+        if not other_match:
+            continue
+        if other_match.group(1) == base and task.get('phase', '') not in terminal_phases:
+            return other_id
+
+    return None
+
+
+def build_respawn_entry(existing, workspace=False):
+    """Simulate spawn-agent.sh respawn metadata preservation."""
+    iteration = 0
+    findings = []
+    fix_target = 'auditing'
+    require_plan_review = True
+    auto_retry_count = 0
+    auto_split_attempt_count = 0
+    split_depth = 0
+    parent_task = None
+
+    if existing:
+        iteration = existing.get('iteration', 0)
+        findings = existing.get('findings', [])
+        fix_target = existing.get('fixTarget', 'auditing')
+        require_plan_review = existing.get('requiresPlanReview', True)
+        auto_retry_count = existing.get('autoRetryCount', 0)
+        auto_split_attempt_count = existing.get('autoSplitAttemptCount', 0)
+        split_depth = existing.get('splitDepth', 0)
+        parent_task = existing.get('parentTask')
+        workspace = existing.get('workspace', workspace)
+
+    entry = {
+        'iteration': iteration,
+        'findings': findings,
+        'fixTarget': fix_target,
+        'requiresPlanReview': require_plan_review,
+        'autoRetryCount': auto_retry_count,
+        'autoSplitAttemptCount': auto_split_attempt_count,
+        'splitDepth': split_depth,
+    }
+    if workspace:
+        entry['workspace'] = True
+    if parent_task:
+        entry['parentTask'] = parent_task
+    return entry
 
 
 # ---------------------------------------------------------------------------
@@ -296,6 +360,188 @@ class TestTerminalPhases(unittest.TestCase):
         """needs_split should NOT be in the terminal list (it needs processing)."""
         terminal = ('merged', 'plan_review', 'split')
         self.assertNotIn('needs_split', terminal)
+
+
+class TestSupersedingTaskPhaseFilter(unittest.TestCase):
+    """Verify superseding ignores terminal sibling tasks."""
+
+    def test_merged_sibling_does_not_supersede(self):
+        tasks = [
+            {'id': 'feature-x', 'phase': 'implementing'},
+            {'id': 'feature-x-v2', 'phase': 'merged'},
+        ]
+        self.assertIsNone(get_superseding_task('feature-x', tasks))
+
+    def test_needs_split_sibling_does_not_supersede(self):
+        tasks = [
+            {'id': 'feature-x', 'phase': 'implementing'},
+            {'id': 'feature-x-v2', 'phase': 'needs_split'},
+        ]
+        self.assertIsNone(get_superseding_task('feature-x', tasks))
+
+    def test_active_sibling_supersedes(self):
+        tasks = [
+            {'id': 'feature-x', 'phase': 'implementing'},
+            {'id': 'feature-x-v2', 'phase': 'planning'},
+        ]
+        self.assertEqual(get_superseding_task('feature-x', tasks), 'feature-x-v2')
+
+
+class TestSupersedingTaskAllTerminalPhases(unittest.TestCase):
+    """Verify all terminal phases are excluded from superseding."""
+
+    def test_failed_sibling_does_not_supersede(self):
+        tasks = [
+            {'id': 'feature-x', 'phase': 'implementing'},
+            {'id': 'feature-x-v2', 'phase': 'failed'},
+        ]
+        self.assertIsNone(get_superseding_task('feature-x', tasks))
+
+    def test_split_sibling_does_not_supersede(self):
+        tasks = [
+            {'id': 'feature-x', 'phase': 'implementing'},
+            {'id': 'feature-x-v2', 'phase': 'split'},
+        ]
+        self.assertIsNone(get_superseding_task('feature-x', tasks))
+
+
+class TestAutoRetryResetsAutoSplitAttemptCount(unittest.TestCase):
+    """Verify that auto-retry resets autoSplitAttemptCount to 0.
+
+    When monitor.sh performs an auto-retry, it resets autoSplitAttemptCount
+    so that after the retry if needs_split is hit again, split attempts start fresh.
+    """
+
+    def test_retry_resets_split_attempt_count(self):
+        """Simulates monitor.sh apply_updates during retry: autoSplitAttemptCount=0."""
+        task = {
+            'phase': 'needs_split',
+            'autoRetryCount': 0,
+            'splitDepth': 0,
+            'autoSplitAttemptCount': 1,
+            'description': 'Build widget',
+            'productGoal': 'Ship widget',
+        }
+        action, updates = simulate_needs_split_decision(task)
+        self.assertEqual(action, 'retry')
+        # Monitor.sh explicitly resets autoSplitAttemptCount to 0 on retry
+        # (see monitor.sh apply_updates in the should_retry block).
+        # The decision function returns retry; the caller (monitor) resets it.
+        # Verify the pattern: after retry, a second needs_split can split.
+        retried_task = dict(task)
+        retried_task['autoRetryCount'] = updates['autoRetryCount']
+        retried_task['autoSplitAttemptCount'] = 0  # monitor resets this
+        retried_task['phase'] = 'needs_split'
+        action2, _ = simulate_needs_split_decision(retried_task)
+        self.assertEqual(action2, 'split')
+
+
+class TestFullLifecycleDecisionChain(unittest.TestCase):
+    """Simulate the full needs_split lifecycle: retry -> split -> terminal."""
+
+    def test_fresh_to_retry_to_split_to_terminal(self):
+        """Walk through the complete lifecycle of a task hitting needs_split."""
+        task = {
+            'phase': 'needs_split',
+            'autoRetryCount': 0,
+            'splitDepth': 0,
+            'autoSplitAttemptCount': 0,
+            'description': 'Build widget',
+            'productGoal': 'Ship widget',
+            'findings': [],
+        }
+
+        # Step 1: First needs_split -> retry
+        action, updates = simulate_needs_split_decision(task)
+        self.assertEqual(action, 'retry')
+        self.assertEqual(updates['autoRetryCount'], 1)
+
+        # Step 2: Apply retry updates (including autoSplitAttemptCount=0 reset)
+        task['autoRetryCount'] = updates['autoRetryCount']
+        task['autoSplitAttemptCount'] = 0
+        task['findings'] = updates['findings']
+        task['iteration'] = 0
+
+        # Step 3: Task hits needs_split again after retry -> split
+        action, updates = simulate_needs_split_decision(task)
+        self.assertEqual(action, 'split')
+
+        # Step 4: Subtask (splitDepth=1) hits needs_split -> terminal
+        subtask = {
+            'phase': 'needs_split',
+            'autoRetryCount': 0,
+            'splitDepth': 1,
+            'autoSplitAttemptCount': 0,
+            'description': 'Build widget UI',
+            'productGoal': 'Ship widget',
+        }
+        action, updates = simulate_needs_split_decision(subtask)
+        self.assertEqual(action, 'terminal')
+
+    def test_split_failure_increments_attempt_count(self):
+        """When auto-split fails, autoSplitAttemptCount increments.
+
+        Simulates the monitor.sh behavior where split command errors or no
+        subtasks created leads to incremented autoSplitAttemptCount.
+        """
+        task = {
+            'phase': 'needs_split',
+            'autoRetryCount': 1,
+            'splitDepth': 0,
+            'autoSplitAttemptCount': 0,
+            'description': 'Build widget',
+            'productGoal': 'Ship widget',
+            'findings': [],
+        }
+
+        # First split attempt -> should try split
+        action, _ = simulate_needs_split_decision(task)
+        self.assertEqual(action, 'split')
+
+        # Simulate split failure (monitor increments autoSplitAttemptCount)
+        task['autoSplitAttemptCount'] = 1
+
+        # Second split attempt -> should still try split
+        action, _ = simulate_needs_split_decision(task, max_auto_split_attempts=2)
+        self.assertEqual(action, 'split')
+
+        # Another failure
+        task['autoSplitAttemptCount'] = 2
+
+        # Now exhausted -> terminal
+        action, _ = simulate_needs_split_decision(task, max_auto_split_attempts=2)
+        self.assertEqual(action, 'terminal')
+
+
+class TestRespawnMetadataPreservation(unittest.TestCase):
+    """Verify respawn preserves auto retry/split metadata."""
+
+    def test_preserves_retry_split_metadata(self):
+        existing = {
+            'iteration': 3,
+            'findings': ['A'],
+            'fixTarget': 'implementation',
+            'requiresPlanReview': False,
+            'autoRetryCount': 1,
+            'autoSplitAttemptCount': 2,
+            'splitDepth': 1,
+            'parentTask': 'parent-1',
+            'workspace': True,
+        }
+        entry = build_respawn_entry(existing, workspace=False)
+        self.assertEqual(entry['autoRetryCount'], 1)
+        self.assertEqual(entry['autoSplitAttemptCount'], 2)
+        self.assertEqual(entry['splitDepth'], 1)
+        self.assertEqual(entry['parentTask'], 'parent-1')
+        self.assertTrue(entry['workspace'])
+
+    def test_defaults_when_no_existing_task(self):
+        entry = build_respawn_entry(None, workspace=False)
+        self.assertEqual(entry['autoRetryCount'], 0)
+        self.assertEqual(entry['autoSplitAttemptCount'], 0)
+        self.assertEqual(entry['splitDepth'], 0)
+        self.assertNotIn('parentTask', entry)
+        self.assertNotIn('workspace', entry)
 
 
 # ---------------------------------------------------------------------------

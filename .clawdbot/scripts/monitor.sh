@@ -401,13 +401,14 @@ def get_superseding_task(tid, all_tasks):
             if t.get('supersededBy'):
                 return t['supersededBy']
 
-    # 2. Convention: same base name, other task is not failed/split
+    # 2. Convention: same base name, other task is still active
     match = _re.match(r'^(.*?)(?:-v(\d+))?$', tid)
     if not match:
         return None
     base = match.group(1)
 
-    terminal_phases = {'failed', 'split'}
+    # Treat non-runnable phases as terminal when deciding if a sibling supersedes.
+    terminal_phases = {'failed', 'split', 'merged', 'needs_split'}
     for t in all_tasks:
         other_id = t.get('id', '')
         if other_id == tid:
@@ -417,7 +418,7 @@ def get_superseding_task(tid, all_tasks):
             continue
         other_base = other_match.group(1)
 
-        # Same base, other task is still alive (not failed/split)
+        # Same base, other task is still alive (not terminal)
         if other_base == base and t.get('phase', '') not in terminal_phases:
             return other_id
 
