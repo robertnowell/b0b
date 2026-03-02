@@ -17,6 +17,14 @@ set -euo pipefail
 # shellcheck source=config.sh
 source "$(cd "$(dirname "$0")" && pwd)/config.sh"
 
+# Prevent concurrent dispatch runs (causes duplicate task creation)
+DISPATCH_LOCK="${STATE_DIR}/.gh-comment-dispatch.lock"
+exec 9>"$DISPATCH_LOCK"
+if ! flock -n 9; then
+  echo "Another gh-comment-dispatch is already running — skipping"
+  exit 0
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DISPATCH="${SCRIPT_DIR}/dispatch.sh"
 POLL="${SCRIPT_DIR}/gh-poll.sh"
