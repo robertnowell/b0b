@@ -410,6 +410,26 @@ print(json.dumps({
 
   echo "Comment ${comment_id} from ${author} on #${number}: intent=${intent}"
 
+  # Skip closed/merged PRs and issues — no point dispatching work for them
+  if [ "$number" != "unknown" ]; then
+    pr_state=$(gh api "repos/${REPO}/pulls/${number}" --jq '.state + ":" + (.merged | tostring)' 2>/dev/null) || pr_state=""
+    if [ "$pr_state" = "closed:true" ]; then
+      echo "Skipping comment on merged PR #${number}"
+      continue
+    elif [ "$pr_state" = "closed:false" ]; then
+      echo "Skipping comment on closed PR #${number}"
+      continue
+    fi
+    # If not a PR (404), check issue state
+    if [ -z "$pr_state" ]; then
+      issue_state=$(gh api "repos/${REPO}/issues/${number}" --jq '.state' 2>/dev/null) || issue_state=""
+      if [ "$issue_state" = "closed" ]; then
+        echo "Skipping comment on closed issue #${number}"
+        continue
+      fi
+    fi
+  fi
+
   case "$intent" in
     action_request)
       if ! is_authorized_user "$author" "$ALLOWED_USERS"; then
