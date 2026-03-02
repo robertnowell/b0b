@@ -253,10 +253,44 @@ sys.exit(0 if found else 1)
 # --- Main ---
 
 # 1. Poll for new comments
-NEW_POLL_OUTPUT=$("$POLL" 2>/dev/null) || {
+RAW_POLL_OUTPUT=$("$POLL" 2>/dev/null) || {
   echo "WARNING: gh-poll.sh failed or returned no results"
-  NEW_POLL_OUTPUT=""
+  RAW_POLL_OUTPUT=""
 }
+
+# Separate state_update line from comment lines (two-phase commit:
+# state is only written after all comments are processed successfully)
+PENDING_STATE_UPDATE=""
+NEW_POLL_OUTPUT=""
+if [ -n "$RAW_POLL_OUTPUT" ]; then
+  PENDING_STATE_UPDATE=$(echo "$RAW_POLL_OUTPUT" | python3 -c "
+import json, sys
+for line in sys.stdin:
+    line = line.strip()
+    if not line: continue
+    try:
+        obj = json.loads(line)
+        if obj.get('_type') == 'state_update':
+            print(line)
+            break
+    except Exception:
+        pass
+" 2>/dev/null) || PENDING_STATE_UPDATE=""
+
+  NEW_POLL_OUTPUT=$(echo "$RAW_POLL_OUTPUT" | python3 -c "
+import json, sys
+for line in sys.stdin:
+    line = line.strip()
+    if not line: continue
+    try:
+        obj = json.loads(line)
+        if obj.get('_type') == 'state_update':
+            continue
+    except Exception:
+        pass
+    print(line)
+" 2>/dev/null) || NEW_POLL_OUTPUT=""
+fi
 
 QUEUED_POLL_OUTPUT=""
 if [ -f "$QUEUE_FILE" ]; then
@@ -264,6 +298,18 @@ if [ -f "$QUEUE_FILE" ]; then
 fi
 
 if [ -z "$NEW_POLL_OUTPUT" ] && [ -z "$QUEUED_POLL_OUTPUT" ]; then
+  # Even with no comments, commit state to advance lastChecked
+  if [ -n "$PENDING_STATE_UPDATE" ]; then
+    STATE_FILE="${GH_POLL_STATE_FILE:-${STATE_DIR}/gh-poll-state.json}"
+    echo "$PENDING_STATE_UPDATE" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+state = data.get('state', {})
+with open(sys.argv[1], 'w') as f:
+    json.dump(state, f, indent=2)
+    f.write('\n')
+" "$STATE_FILE" || echo "ERROR: Failed to commit poll state update"
+  fi
   echo "No new @kopi-claw mentions found"
   exit 0
 fi
@@ -561,10 +607,52 @@ print(task.get('phase', '') if task else '')
       ;;
 
     question)
-      echo "Question from ${author} on #${number} — notify only"
-      notify --task-id "gh-${number}" --phase "other" \
-        --message "Question from ${author} on #${number}: ${task_desc}" \
-        --next "Manual response needed"
+      # Reviewer questions on PRs with active tasks are implicit feedback —
+      # reclassify and dispatch a fix agent if conditions are met
+      reclassified=false
+      if is_authorized_user "$author" "$ALLOWED_USERS"; then
+        matching_task=$(find_task_by_number "$number") || matching_task=""
+        if [ -n "$matching_task" ]; then
+          task_phase=$(python3 -c "
+import json, sys
+tasks = json.load(open(sys.argv[1]))
+task = next((t for t in tasks if t.get('id') == sys.argv[2]), None)
+print(task.get('phase', '') if task else '')
+" "$TASKS_FILE" "$matching_task" 2>/dev/null) || task_phase=""
+
+          FIXABLE_PHASES="reviewing pr_ready"
+          if echo "$FIXABLE_PHASES" | grep -qw "$task_phase"; then
+            echo "Reclassifying question from authorized user ${author} on #${number} (task ${matching_task} in ${task_phase}) as feedback"
+            append_finding "$matching_task" "GitHub reviewer question from ${author} on #${number}: ${task_desc}"
+            add_reaction "$comment_id" "$comment_type" "+1"
+
+            if [ "$dispatch_count" -ge "$MAX_DISPATCHES_PER_CYCLE" ]; then
+              echo "WARNING: Max dispatches reached, feedback fix for ${matching_task} deferred"
+              notify --task-id "$matching_task" --phase "feedback" \
+                --message "Reviewer question recorded but fix agent deferred (dispatch limit)." \
+                --next "Will spawn fix agent next cycle"
+            else
+              echo "Spawning fix agent for reviewer question on task ${matching_task}"
+              DISPATCH_FIX="${SCRIPT_DIR}/dispatch-fix.sh"
+              "$DISPATCH_FIX" \
+                --task-id "$matching_task" \
+                --feedback "GitHub reviewer question from ${author} on #${number}: ${task_desc}" || {
+                echo "WARNING: dispatch-fix.sh failed for ${matching_task}"
+              }
+              add_reaction "$comment_id" "$comment_type" "rocket"
+              dispatch_count=$((dispatch_count + 1))
+            fi
+            reclassified=true
+          fi
+        fi
+      fi
+
+      if [ "$reclassified" = false ]; then
+        echo "Question from ${author} on #${number} — notify only"
+        notify --task-id "gh-${number}" --phase "other" \
+          --message "Question from ${author} on #${number}: ${task_desc}" \
+          --next "Manual response needed"
+      fi
       ;;
 
     other|*)
@@ -583,6 +671,19 @@ if [ -n "$NEXT_QUEUE_FILE" ]; then
   else
     rm -f "$NEXT_QUEUE_FILE" "$QUEUE_FILE"
   fi
+fi
+
+# Commit poll state — only after all comments have been processed/queued
+if [ -n "$PENDING_STATE_UPDATE" ]; then
+  STATE_FILE="${GH_POLL_STATE_FILE:-${STATE_DIR}/gh-poll-state.json}"
+  echo "$PENDING_STATE_UPDATE" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+state = data.get('state', {})
+with open(sys.argv[1], 'w') as f:
+    json.dump(state, f, indent=2)
+    f.write('\n')
+" "$STATE_FILE" || echo "ERROR: Failed to commit poll state update"
 fi
 
 echo "gh-comment-dispatch complete. Dispatched ${dispatch_count} new task(s)."

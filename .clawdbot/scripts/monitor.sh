@@ -300,7 +300,7 @@ def spawn_agent(task, phase, prompt_template, agent_override=None):
     plan_text = task.get('planContent', '') or description
     if phase in ('auditing', 'testing') and worktree and os.path.isdir(worktree):
         diff_result = subprocess.run(
-            ['git', 'diff', 'main...HEAD'],
+            ['git', 'diff', 'origin/main...HEAD'],
             capture_output=True, text=True, cwd=worktree)
         if diff_result.returncode == 0 and diff_result.stdout.strip():
             plan_text = diff_result.stdout
@@ -482,6 +482,10 @@ def get_superseding_task(tid, all_tasks):
 # --- Main state machine ---
 # Pattern: read snapshot for decisions, call spawn (which writes its own entry),
 # then use apply_updates() to re-read fresh JSON and apply monitor-specific fields.
+
+# Fetch latest main so origin/main is fresh for diffs and reverts
+subprocess.run(['git', 'fetch', 'origin', 'main', '--quiet'],
+               capture_output=True, cwd=repo_root)
 
 tasks = read_tasks()
 task_map = {r['id']: r for r in check_output.get('tasks', [])}
