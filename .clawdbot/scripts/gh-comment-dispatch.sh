@@ -1,17 +1,15 @@
 #!/usr/bin/env bash
-# gh-comment-dispatch.sh — Poll GitHub comments, classify intent, dispatch pipeline actions
+# gh-comment-dispatch.sh — Poll GitHub comments, dispatch pipeline tasks
 # Called by monitor.sh each cycle. Outputs log lines to stdout.
 #
 # Flow:
 #   1. Run gh-poll.sh → JSON lines of new @kopi-claw mentions
-#   2. For each comment: classify intent via gh-comment-classify.py
-#   3. Dispatch based on intent:
-#      - action_request → generate task-id, dispatch planning agent
-#      - feedback       → append to existing task findings
-#      - approval       → approve-plan.sh for matching task
-#      - rejection      → reject-plan.sh with feedback
-#      - question/other → notify Slack only
-#   4. Add GitHub reactions for feedback
+#   2. For each comment:
+#      - Known bots → LLM evaluation (skip if no real changes needed)
+#      - Existing task for PR → route as feedback, spawn fix agent if fixable
+#      - New task → dispatch planning agent
+#      - "plan only" in comment → gate at plan_review
+#   3. Reply in GitHub thread + add reactions
 
 set -euo pipefail
 
@@ -21,9 +19,6 @@ source "$(cd "$(dirname "$0")" && pwd)/config.sh"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DISPATCH="${SCRIPT_DIR}/dispatch.sh"
-APPROVE="${SCRIPT_DIR}/approve-plan.sh"
-REJECT="${SCRIPT_DIR}/reject-plan.sh"
-CLASSIFY="${SCRIPT_DIR}/gh-comment-classify.py"
 POLL="${SCRIPT_DIR}/gh-poll.sh"
 
 # shellcheck source=notify.sh
@@ -32,7 +27,6 @@ source "${SCRIPT_DIR}/notify.sh"
 REPO="tryrendition/Rendition"
 BOT_USER="kopi-claw"
 MAX_DISPATCHES_PER_CYCLE="${GH_COMMENT_MAX_DISPATCHES:-3}"
-ALLOWED_USERS="${GH_COMMENT_ALLOWED_USERS:-kopi}"
 QUEUE_FILE="${GH_COMMENT_QUEUE_FILE:-${STATE_DIR}/gh-comment-queue.jsonl}"
 
 # Check if dispatch is enabled
@@ -102,6 +96,21 @@ add_reaction() {
     endpoint="repos/${REPO}/issues/comments/${comment_id}/reactions"
   fi
   gh api "$endpoint" -f content="$reaction" --silent 2>/dev/null || true
+}
+
+gh_reply() {
+  local number="$1"
+  local comment_id="$2"
+  local comment_type="$3"
+  local message="$4"
+  if [ "$comment_type" = "review_comment" ]; then
+    # Reply to PR review comment thread
+    gh api "repos/${REPO}/pulls/comments/${comment_id}/replies" \
+      -f body="$message" --silent 2>/dev/null || true
+  else
+    # Reply to issue/PR comment
+    gh issue comment "$number" --repo "$REPO" --body "$message" 2>/dev/null || true
+  fi
 }
 
 find_task_by_number() {
@@ -187,21 +196,6 @@ finally:
     fcntl.flock(fd, fcntl.LOCK_UN)
     fd.close()
 " "$TASKS_FILE" "$LOCK_FILE" "$task_id" "$finding"
-}
-
-is_authorized_user() {
-  local author="$1"
-  local allowed_csv="$2"
-  local item
-  IFS=',' read -r -a allowed_arr <<< "$allowed_csv"
-  for item in "${allowed_arr[@]}"; do
-    item="${item#"${item%%[![:space:]]*}"}"
-    item="${item%"${item##*[![:space:]]}"}"
-    if [ -n "$item" ] && [ "$author" = "$item" ]; then
-      return 0
-    fi
-  done
-  return 1
 }
 
 is_known_bot() {
@@ -392,23 +386,10 @@ print(json.dumps({
   # Add eyes reaction — processing
   add_reaction "$comment_id" "$comment_type" "eyes"
 
-  # Classify intent
-  classification=$(echo "$normalized" | python3 "$CLASSIFY") || {
-    echo "WARNING: Classification failed for comment ${comment_id}"
-    continue
-  }
+  # Use comment body as task description (strip @kopi-claw mention, take first 200 chars)
+  task_desc=$(echo "$body" | sed 's/@kopi-claw//gI' | tr '\n' ' ' | sed 's/  */ /g' | cut -c1-200)
 
-  intent=$(echo "$classification" | python3 -c "import json,sys; print(json.load(sys.stdin)['intent'])")
-  task_desc=$(echo "$classification" | python3 -c "import json,sys; print(json.load(sys.stdin)['taskDescription'])")
-  product_goal=$(echo "$classification" | python3 -c "import json,sys; print(json.load(sys.stdin).get('productGoal',''))")
-
-  # Reclassify known bot action_requests as feedback
-  if [ "$intent" = "action_request" ] && is_known_bot "$author"; then
-    echo "Reclassifying action_request from known bot ${author} as feedback"
-    intent="feedback"
-  fi
-
-  echo "Comment ${comment_id} from ${author} on #${number}: intent=${intent}"
+  echo "Comment ${comment_id} from ${author} on #${number}"
 
   # Skip closed/merged PRs and issues — no point dispatching work for them
   if [ "$number" != "unknown" ]; then
@@ -430,258 +411,116 @@ print(json.dumps({
     fi
   fi
 
-  case "$intent" in
-    action_request)
-      if ! is_authorized_user "$author" "$ALLOWED_USERS"; then
-        echo "Skipping unauthorized action request ${comment_id} by ${author}"
-        notify --task-id "gh-${number}" --phase "other" \
-          --message "Ignored action request from unauthorized user ${author} on #${number}" \
-          --next "Authorize user via GH_COMMENT_ALLOWED_USERS to enable automation"
-        continue
-      fi
+  # --- Bot evaluation gate ---
+  # Known bots (e.g. kilo-code[bot]) get LLM evaluation to filter out noise
+  if is_known_bot "$author"; then
+    echo "Evaluating bot comment from ${author} on #${number}"
+    EVALUATE_BOT="${SCRIPT_DIR}/gh-comment-evaluate-bot.py"
+    eval_result=$(echo "$body" | python3 "$EVALUATE_BOT" 2>/dev/null) || eval_result='{"needsChanges":true,"taskDescription":"","reason":"Evaluation script failed"}'
+    needs_changes=$(echo "$eval_result" | python3 -c "import json,sys; d=json.load(sys.stdin); print('true' if d.get('needsChanges') else 'false')")
+    task_desc_override=$(echo "$eval_result" | python3 -c "import json,sys; print(json.load(sys.stdin).get('taskDescription',''))")
+    eval_reason=$(echo "$eval_result" | python3 -c "import json,sys; print(json.load(sys.stdin).get('reason',''))")
 
-      # Check if there's already an active task for this PR/issue — route to it
-      existing_task=$(find_task_by_number "$number") || existing_task=""
-      if [ -n "$existing_task" ]; then
-        echo "Active task ${existing_task} found for #${number} — routing as feedback instead of new task"
-        append_finding "$existing_task" "GitHub action request from ${author} on #${number}: ${task_desc}"
-        add_reaction "$comment_id" "$comment_type" "+1"
+    if [ "$needs_changes" != "true" ]; then
+      echo "Bot comment on #${number} evaluated — no actionable changes: ${eval_reason}"
+      gh_reply "$number" "$comment_id" "$comment_type" "Evaluated — no actionable code changes required. ${eval_reason}"
+      add_reaction "$comment_id" "$comment_type" "+1"
+      continue
+    fi
+    # Use LLM-extracted task description if available
+    [ -n "$task_desc_override" ] && task_desc="$task_desc_override"
+    echo "Bot comment on #${number} evaluated — changes needed: ${eval_reason}"
+  fi
 
-        # Spawn fix agent if task is in a fixable phase
-        task_phase=$(python3 -c "
+  # --- Existing task dedup ---
+  # If there's already an active task for this PR/issue, route as feedback
+  existing_task=$(find_task_by_number "$number") || existing_task=""
+  if [ -n "$existing_task" ]; then
+    echo "Active task ${existing_task} found for #${number} — routing as feedback"
+    append_finding "$existing_task" "GitHub comment from ${author} on #${number}: ${task_desc}"
+
+    task_phase=$(python3 -c "
 import json, sys
 tasks = json.load(open(sys.argv[1]))
 task = next((t for t in tasks if t.get('id') == sys.argv[2]), None)
 print(task.get('phase', '') if task else '')
 " "$TASKS_FILE" "$existing_task" 2>/dev/null) || task_phase=""
 
-        FIXABLE_PHASES="reviewing pr_ready"
-        if echo "$FIXABLE_PHASES" | grep -qw "$task_phase"; then
-          if [ "$dispatch_count" -lt "$MAX_DISPATCHES_PER_CYCLE" ]; then
-            echo "Spawning fix agent for existing task ${existing_task}"
-            DISPATCH_FIX="${SCRIPT_DIR}/dispatch-fix.sh"
-            "$DISPATCH_FIX" \
-              --task-id "$existing_task" \
-              --feedback "GitHub action request from ${author} on #${number}: ${task_desc}" || {
-              echo "WARNING: dispatch-fix.sh failed for ${existing_task}"
-            }
-            add_reaction "$comment_id" "$comment_type" "rocket"
-            dispatch_count=$((dispatch_count + 1))
-          else
-            echo "WARNING: Max dispatches reached, fix for ${existing_task} deferred"
-            notify --task-id "$existing_task" --phase "feedback" \
-              --message "Action request recorded but fix agent deferred (dispatch limit)." \
-              --next "Will spawn fix agent next cycle"
-          fi
-        fi
-        continue
-      fi
-
-      # Check dispatch limit
-      if [ "$dispatch_count" -ge "$MAX_DISPATCHES_PER_CYCLE" ]; then
-        echo "WARNING: Max dispatches per cycle (${MAX_DISPATCHES_PER_CYCLE}) reached, queueing comment ${comment_id}"
-        if [ -n "$NEXT_QUEUE_FILE" ]; then
-          echo "$line" >> "$NEXT_QUEUE_FILE"
-        else
-          enqueue_comment "$line"
-        fi
-        notify --task-id "gh-${number}" --phase "queued" \
-          --message "Action request queued (dispatch limit reached) from ${author}: ${task_desc}" \
-          --product-goal "$product_goal"
-        continue
-      fi
-
-      # Generate task ID and branch
-      task_id=$(generate_task_id "$number" "$task_desc")
-      branch=$(generate_branch "$number" "$task_desc")
-      agent="${GH_COMMENT_DEFAULT_AGENT:-claude}"
-      require_review="${GH_COMMENT_REQUIRE_PLAN_REVIEW:-true}"
-
-      echo "Dispatching: task=${task_id} branch=${branch} agent=${agent}"
-
-      # Dispatch planning agent
-      "$DISPATCH" \
-        --task-id "$task_id" \
-        --branch "$branch" \
-        --product-goal "$product_goal" \
-        --description "$task_desc" \
-        --agent "$agent" \
-        --phase planning \
-        --require-plan-review "$require_review" \
-        --user-request "$body" || {
-        echo "ERROR: dispatch.sh failed for task ${task_id}"
-        continue
-      }
-
-      # Store source comment metadata on the task
-      apply_task_update "$task_id" \
-        "sourceNumber=$number" \
-        "sourceCommentId=$comment_id" \
-        "sourceCommentUrl=$comment_url"
-
-      # Add rocket reaction
-      add_reaction "$comment_id" "$comment_type" "rocket"
-
-      notify --task-id "$task_id" --phase "planning" \
-        --message "New task from GitHub comment on #${number} by ${author}: ${task_desc}" \
-        --product-goal "$product_goal"
-
-      dispatch_count=$((dispatch_count + 1))
-      ;;
-
-    feedback)
-      if ! is_authorized_user "$author" "$ALLOWED_USERS" && ! is_known_bot "$author"; then
-        echo "Skipping unauthorized feedback ${comment_id} by ${author}"
-        notify --task-id "gh-${number}" --phase "other" \
-          --message "Ignored feedback from unauthorized user ${author} on #${number}" \
-          --next "Authorize user via GH_COMMENT_ALLOWED_USERS to allow task mutations"
-        continue
-      fi
-
-      matching_task=$(find_task_by_number "$number") || {
-        echo "No matching task for #${number} — notifying only"
-        notify --task-id "gh-${number}" --phase "other" \
-          --message "Feedback from ${author} on #${number}, but no matching task found: ${task_desc}"
-        continue
-      }
-
-      echo "Appending feedback to task ${matching_task}"
-      append_finding "$matching_task" "GitHub feedback from ${author} on #${number}: ${task_desc}"
-      add_reaction "$comment_id" "$comment_type" "+1"
-
-      # Spawn fixing agent if task is in a fixable (idle) phase
-      task_phase=$(python3 -c "
-import json, sys
-tasks = json.load(open(sys.argv[1]))
-task = next((t for t in tasks if t.get('id') == sys.argv[2]), None)
-print(task.get('phase', '') if task else '')
-" "$TASKS_FILE" "$matching_task" 2>/dev/null) || task_phase=""
-
-      FIXABLE_PHASES="reviewing pr_ready"
-      if echo "$FIXABLE_PHASES" | grep -qw "$task_phase"; then
-        if [ "$dispatch_count" -ge "$MAX_DISPATCHES_PER_CYCLE" ]; then
-          echo "WARNING: Max dispatches reached, feedback fix for ${matching_task} deferred"
-          notify --task-id "$matching_task" --phase "feedback" \
-            --message "Feedback recorded but fix agent deferred (dispatch limit). Will process next cycle." \
-            --next "Will spawn fix agent next cycle"
-        else
-          echo "Spawning fix agent for feedback on task ${matching_task}"
-          DISPATCH_FIX="${SCRIPT_DIR}/dispatch-fix.sh"
-          "$DISPATCH_FIX" \
-            --task-id "$matching_task" \
-            --feedback "GitHub feedback from ${author} on #${number}: ${task_desc}" || {
-            echo "WARNING: dispatch-fix.sh failed for ${matching_task}"
-          }
-          add_reaction "$comment_id" "$comment_type" "rocket"
-          dispatch_count=$((dispatch_count + 1))
-        fi
+    FIXABLE_PHASES="reviewing pr_ready"
+    if echo "$FIXABLE_PHASES" | grep -qw "$task_phase"; then
+      if [ "$dispatch_count" -lt "$MAX_DISPATCHES_PER_CYCLE" ]; then
+        DISPATCH_FIX="${SCRIPT_DIR}/dispatch-fix.sh"
+        "$DISPATCH_FIX" \
+          --task-id "$existing_task" \
+          --feedback "GitHub comment from ${author} on #${number}: ${task_desc}" || {
+          echo "WARNING: dispatch-fix.sh failed for ${existing_task}"
+        }
+        gh_reply "$number" "$comment_id" "$comment_type" "Feedback applied to existing task \`${existing_task}\` — fix agent dispatched."
+        add_reaction "$comment_id" "$comment_type" "rocket"
+        dispatch_count=$((dispatch_count + 1))
       else
-        echo "Task ${matching_task} in phase ${task_phase} — feedback recorded, no fix agent spawned"
+        gh_reply "$number" "$comment_id" "$comment_type" "Feedback noted on task \`${existing_task}\` — fix queued for next cycle."
+        add_reaction "$comment_id" "$comment_type" "+1"
       fi
-      ;;
-
-    approval)
-      if ! is_authorized_user "$author" "$ALLOWED_USERS"; then
-        echo "Skipping unauthorized approval ${comment_id} by ${author}"
-        notify --task-id "gh-${number}" --phase "other" \
-          --message "Ignored approval from unauthorized user ${author} on #${number}" \
-          --next "Authorize user via GH_COMMENT_ALLOWED_USERS to allow plan approval"
-        continue
-      fi
-
-      matching_task=$(find_task_by_number "$number") || {
-        echo "No matching task for approval on #${number}"
-        notify --task-id "gh-${number}" --phase "other" \
-          --message "Approval from ${author} on #${number}, but no matching task found"
-        continue
-      }
-
-      echo "Processing approval for task ${matching_task}"
-      "$APPROVE" "$matching_task" 2>&1 || {
-        echo "WARNING: approve-plan.sh failed for ${matching_task} (may not be in plan_review)"
-      }
+    else
+      gh_reply "$number" "$comment_id" "$comment_type" "Feedback noted on task \`${existing_task}\` (phase: ${task_phase})."
       add_reaction "$comment_id" "$comment_type" "+1"
-      ;;
+    fi
+    continue
+  fi
 
-    rejection)
-      if ! is_authorized_user "$author" "$ALLOWED_USERS"; then
-        echo "Skipping unauthorized rejection ${comment_id} by ${author}"
-        notify --task-id "gh-${number}" --phase "other" \
-          --message "Ignored rejection from unauthorized user ${author} on #${number}" \
-          --next "Authorize user via GH_COMMENT_ALLOWED_USERS to allow plan rejection"
-        continue
-      fi
+  # --- Dispatch limit ---
+  if [ "$dispatch_count" -ge "$MAX_DISPATCHES_PER_CYCLE" ]; then
+    echo "WARNING: Max dispatches per cycle (${MAX_DISPATCHES_PER_CYCLE}) reached, queueing comment ${comment_id}"
+    enqueue_comment "$line"
+    gh_reply "$number" "$comment_id" "$comment_type" "Queued — dispatch limit reached. Will process next cycle."
+    continue
+  fi
 
-      matching_task=$(find_task_by_number "$number") || {
-        echo "No matching task for rejection on #${number}"
-        notify --task-id "gh-${number}" --phase "other" \
-          --message "Rejection from ${author} on #${number}, but no matching task found"
-        continue
-      }
+  # --- Detect "plan only" mode ---
+  require_review="false"
+  if echo "$body" | grep -qi "plan only"; then
+    require_review="true"
+  fi
 
-      echo "Processing rejection for task ${matching_task}"
-      "$REJECT" "$matching_task" --reason "GitHub comment from ${author}: ${task_desc}" 2>&1 || {
-        echo "WARNING: reject-plan.sh failed for ${matching_task} (may not be in plan_review)"
-      }
-      add_reaction "$comment_id" "$comment_type" "+1"
-      ;;
+  # --- Dispatch task ---
+  task_id=$(generate_task_id "$number" "$task_desc")
+  branch=$(generate_branch "$number" "$task_desc")
+  agent="${GH_COMMENT_DEFAULT_AGENT:-claude}"
 
-    question)
-      # Reviewer questions on PRs with active tasks are implicit feedback —
-      # reclassify and dispatch a fix agent if conditions are met
-      reclassified=false
-      if is_authorized_user "$author" "$ALLOWED_USERS"; then
-        matching_task=$(find_task_by_number "$number") || matching_task=""
-        if [ -n "$matching_task" ]; then
-          task_phase=$(python3 -c "
-import json, sys
-tasks = json.load(open(sys.argv[1]))
-task = next((t for t in tasks if t.get('id') == sys.argv[2]), None)
-print(task.get('phase', '') if task else '')
-" "$TASKS_FILE" "$matching_task" 2>/dev/null) || task_phase=""
+  echo "Dispatching: task=${task_id} branch=${branch} agent=${agent} planOnly=${require_review}"
 
-          FIXABLE_PHASES="reviewing pr_ready"
-          if echo "$FIXABLE_PHASES" | grep -qw "$task_phase"; then
-            echo "Reclassifying question from authorized user ${author} on #${number} (task ${matching_task} in ${task_phase}) as feedback"
-            append_finding "$matching_task" "GitHub reviewer question from ${author} on #${number}: ${task_desc}"
-            add_reaction "$comment_id" "$comment_type" "+1"
+  "$DISPATCH" \
+    --task-id "$task_id" \
+    --branch "$branch" \
+    --product-goal "$task_desc" \
+    --description "$task_desc" \
+    --agent "$agent" \
+    --phase planning \
+    --require-plan-review "$require_review" \
+    --user-request "$body" || {
+    echo "ERROR: dispatch.sh failed for task ${task_id}"
+    continue
+  }
 
-            if [ "$dispatch_count" -ge "$MAX_DISPATCHES_PER_CYCLE" ]; then
-              echo "WARNING: Max dispatches reached, feedback fix for ${matching_task} deferred"
-              notify --task-id "$matching_task" --phase "feedback" \
-                --message "Reviewer question recorded but fix agent deferred (dispatch limit)." \
-                --next "Will spawn fix agent next cycle"
-            else
-              echo "Spawning fix agent for reviewer question on task ${matching_task}"
-              DISPATCH_FIX="${SCRIPT_DIR}/dispatch-fix.sh"
-              "$DISPATCH_FIX" \
-                --task-id "$matching_task" \
-                --feedback "GitHub reviewer question from ${author} on #${number}: ${task_desc}" || {
-                echo "WARNING: dispatch-fix.sh failed for ${matching_task}"
-              }
-              add_reaction "$comment_id" "$comment_type" "rocket"
-              dispatch_count=$((dispatch_count + 1))
-            fi
-            reclassified=true
-          fi
-        fi
-      fi
+  apply_task_update "$task_id" \
+    "sourceNumber=$number" \
+    "sourceCommentId=$comment_id" \
+    "sourceCommentUrl=$comment_url"
 
-      if [ "$reclassified" = false ]; then
-        echo "Question from ${author} on #${number} — notify only"
-        notify --task-id "gh-${number}" --phase "other" \
-          --message "Question from ${author} on #${number}: ${task_desc}" \
-          --next "Manual response needed"
-      fi
-      ;;
+  add_reaction "$comment_id" "$comment_type" "rocket"
 
-    other|*)
-      echo "Unclassified comment from ${author} on #${number} — notify only"
-      notify --task-id "gh-${number}" --phase "other" \
-        --message "Unclassified @kopi-claw mention from ${author} on #${number}: ${task_desc}" \
-        --next "Manual triage needed"
-      ;;
-  esac
+  if [ "$require_review" = "true" ]; then
+    gh_reply "$number" "$comment_id" "$comment_type" "Plan-only task dispatched: \`${task_id}\`. Will post plan for review."
+  else
+    gh_reply "$number" "$comment_id" "$comment_type" "Task dispatched: \`${task_id}\`. Planning → implementing → PR."
+  fi
+
+  notify --task-id "$task_id" --phase "planning" \
+    --message "Task from #${number} by ${author}: ${task_desc}" \
+    --product-goal "$task_desc"
+
+  dispatch_count=$((dispatch_count + 1))
 
 done <<< "$POLL_OUTPUT"
 
