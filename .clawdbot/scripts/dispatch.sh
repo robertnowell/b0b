@@ -45,6 +45,8 @@ MODEL=""
 PHASE="planning"
 REQUIRE_PLAN_REVIEW="false"
 USER_REQUEST=""
+PARENT_TASK_ID=""
+WORKSPACE="false"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -58,6 +60,8 @@ while [[ $# -gt 0 ]]; do
     --phase)                [[ $# -ge 2 ]] || { echo "ERROR: --phase requires a value" >&2; exit 1; };                PHASE="$2"; shift 2 ;;
     --require-plan-review)  [[ $# -ge 2 ]] || { echo "ERROR: --require-plan-review requires a value" >&2; exit 1; };  REQUIRE_PLAN_REVIEW="$2"; shift 2 ;;
     --user-request)         [[ $# -ge 2 ]] || { echo "ERROR: --user-request requires a value" >&2; exit 1; };         USER_REQUEST="$2"; shift 2 ;;
+    --parent-task-id)       [[ $# -ge 2 ]] || { echo "ERROR: --parent-task-id requires a value" >&2; exit 1; };  PARENT_TASK_ID="$2"; shift 2 ;;
+    --workspace)            WORKSPACE="true"; shift ;;
     *) echo "ERROR: Unknown argument: $1" >&2; exit 1 ;;
   esac
 done
@@ -150,12 +154,21 @@ if [ -n "$USER_REQUEST" ]; then
   SPAWN_ARGS+=(--user-request "$USER_REQUEST")
 fi
 
+if [ -n "$PARENT_TASK_ID" ]; then
+  SPAWN_ARGS+=(--parent-task-id "$PARENT_TASK_ID")
+fi
+
+if [ "$WORKSPACE" = "true" ]; then
+  SPAWN_ARGS+=(--workspace)
+fi
+
+
 "$SPAWN" "${SPAWN_ARGS[@]}"
 
 # --- Set requiresPlanReview on the task ---
 python3 -c "
 import json, sys, fcntl
-tasks_file, lock_file, task_id, require_review = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+tasks_file, lock_file, task_id, require_review, workspace, parent_task_id = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6]
 fd = open(lock_file, 'w')
 fcntl.flock(fd, fcntl.LOCK_EX)
 try:
@@ -164,6 +177,10 @@ try:
     for t in tasks:
         if t['id'] == task_id:
             t['requiresPlanReview'] = require_review.lower() == 'true'
+            if workspace.lower() == 'true':
+                t['workspace'] = True
+            if parent_task_id:
+                t['parentTaskId'] = parent_task_id
             break
     with open(tasks_file, 'w') as f:
         json.dump(tasks, f, indent=2)
@@ -171,7 +188,7 @@ try:
 finally:
     fcntl.flock(fd, fcntl.LOCK_UN)
     fd.close()
-" "$TASKS_FILE" "$LOCK_FILE" "$TASK_ID" "$REQUIRE_PLAN_REVIEW"
+" "$TASKS_FILE" "$LOCK_FILE" "$TASK_ID" "$REQUIRE_PLAN_REVIEW" "$WORKSPACE" "$PARENT_TASK_ID"
 
 # --- Send Slack notification ---
 notify \

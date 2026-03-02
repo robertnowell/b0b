@@ -28,8 +28,8 @@ GET_SUPERSEDING_TASK = load_get_superseding_task()
 
 
 class TestGetSupersedingTask(unittest.TestCase):
-    def test_needs_split_task_can_supersede(self):
-        """A same-base task in needs_split is still alive and supersedes."""
+    def test_needs_split_task_does_not_supersede(self):
+        """A same-base task in needs_split is terminal and must not supersede."""
         tasks = [
             {'id': 'task-1', 'phase': 'implementing'},
             {'id': 'task-1-v2', 'phase': 'needs_split'},
@@ -37,7 +37,7 @@ class TestGetSupersedingTask(unittest.TestCase):
 
         superseding = GET_SUPERSEDING_TASK('task-1', tasks)
 
-        self.assertEqual(superseding, 'task-1-v2')
+        self.assertIsNone(superseding)
 
     def test_split_task_does_not_supersede(self):
         """A same-base task in split is terminal and must not supersede."""

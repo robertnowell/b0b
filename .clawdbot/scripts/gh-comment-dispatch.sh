@@ -114,7 +114,7 @@ try:
     tasks = json.load(open(sys.argv[1]))
     for t in tasks:
         phase = t.get('phase', '')
-        if phase in ('merged', 'needs_split', 'failed'):
+        if phase in ('merged', 'needs_split', 'split', 'failed'):
             continue
         src = str(t.get('sourceNumber', ''))
         pr = str(t.get('prNumber', ''))

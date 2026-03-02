@@ -398,38 +398,86 @@ def get_superseding_task(tid, all_tasks):
     \"\"\"Check if another active task makes this dead task redundant.
 
     1. Explicit 'supersededBy' field on the task.
-    2. Convention: same base name (stripping -vN suffix), other task is alive.
+    2. Explicit 'parentTaskId' linkage (phase check only).
+    3. Convention: same base name (-vN suffix), higher version, at least as advanced phase.
     \"\"\"
     import re as _re
 
-    # 1. Explicit supersededBy field
+    PHASE_ORDER = ['planning', 'plan_review', 'implementing', 'auditing',
+                   'fixing', 'testing', 'pr_creating', 'reviewing',
+                   'pr_ready', 'merged']
+
+    def phase_rank(phase):
+        try:
+            return PHASE_ORDER.index(phase)
+        except ValueError:
+            return -1
+
+    # Compatibility note: \"needs_split\" is legacy; \"split\" replaced it.
+    terminal_phases = {'failed', 'needs_split', 'split'}
+
+    # Find our own task to get our phase
+    my_task = None
     for t in all_tasks:
         if t.get('id') == tid:
-            if t.get('supersededBy'):
-                return t['supersededBy']
+            my_task = t
+            break
+
+    # 1. Explicit supersededBy field
+    if my_task and my_task.get('supersededBy'):
+        return my_task['supersededBy']
+
+    my_phase = my_task.get('phase', '') if my_task else ''
+    my_rank = phase_rank(my_phase)
 
     # 2. Convention: same base name, other task is still active
     match = _re.match(r'^(.*?)(?:-v(\d+))?$', tid)
     if not match:
         return None
     base = match.group(1)
+    my_version = int(match.group(2)) if match.group(2) else 0
 
-    # Treat non-runnable phases as terminal when deciding if a sibling supersedes.
-    terminal_phases = {'failed', 'split', 'merged', 'needs_split'}
+    best_candidate = None
+    best_score = None
     for t in all_tasks:
         other_id = t.get('id', '')
         if other_id == tid:
             continue
+
+        # Skip terminal tasks — they're broken, not superseding
+        if t.get('phase', '') in terminal_phases:
+            continue
+
+        # Determine relationship: explicit child->parent linkage or same base name
+        is_linked = (t.get('parentTaskId') == tid)
+
         other_match = _re.match(r'^(.*?)(?:-v(\d+))?$', other_id)
         if not other_match:
             continue
         other_base = other_match.group(1)
+        is_same_base = (other_base == base)
 
-        # Same base, other task is still alive (not terminal)
-        if other_base == base and t.get('phase', '') not in terminal_phases:
-            return other_id
+        if not is_linked and not is_same_base:
+            continue
 
-    return None
+        # Version check: only for same-base tasks (not parentTaskId-linked)
+        # parentTaskId linkage is explicit — the child is the intended successor
+        if is_same_base and not is_linked:
+            other_version = int(other_match.group(2)) if other_match.group(2) else 0
+            if other_version <= my_version:
+                continue
+
+        # Phase check: superseder must be at least as far along
+        other_rank = phase_rank(t.get('phase', ''))
+        if other_rank < my_rank:
+            continue
+
+        score = (other_rank, int(other_match.group(2)) if other_match.group(2) else 0)
+        if best_score is None or score > best_score:
+            best_candidate = other_id
+            best_score = score
+
+    return best_candidate
 
 # --- Main state machine ---
 # Pattern: read snapshot for decisions, call spawn (which writes its own entry),
