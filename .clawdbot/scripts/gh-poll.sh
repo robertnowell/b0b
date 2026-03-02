@@ -9,7 +9,7 @@ source "$(cd "$(dirname "$0")" && pwd)/config.sh"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO="tryrendition/Rendition"
-STATE_FILE="${STATE_DIR}/gh-poll-state.json"
+STATE_FILE="${GH_POLL_STATE_FILE:-${STATE_DIR}/gh-poll-state.json}"
 
 # Initialize state file if missing
 if [ ! -f "$STATE_FILE" ]; then

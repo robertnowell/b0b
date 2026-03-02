@@ -39,6 +39,13 @@ CHECK_OUTPUT=$("$CHECK" 2>/dev/null) || {
   exit 1
 }
 
+# Step 1.5: Process new GitHub comments → auto-dispatch
+GH_DISPATCH="${SCRIPT_DIR}/gh-comment-dispatch.sh"
+if [ -x "$GH_DISPATCH" ]; then
+  log "Running gh-comment-dispatch..."
+  "$GH_DISPATCH" 2>&1 | while IFS= read -r line; do log "[gh-dispatch] $line"; done || log "WARNING: gh-comment-dispatch failed"
+fi
+
 # Step 2: Process each task with the state machine
 python3 -c "
 import json, sys, subprocess, os, fcntl, re
