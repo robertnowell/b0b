@@ -56,27 +56,41 @@ _slack_bot_post() {
 
   [[ -n "${SLACK_BOT_TOKEN:-}" ]] || return 1
 
-  local http_code
-  http_code=$(python3 -c "
+  local response http_code body
+  response=$(python3 -c "
 import json, sys
 text = sys.stdin.read()
 if len(text) > 39000:
     text = text[:39000] + '\n\n_(truncated — see plan file for full text)_'
 payload = {'channel': sys.argv[1], 'text': text, 'unfurl_links': False, 'unfurl_media': False}
 print(json.dumps(payload))
-" "$channel" <<< "$text" | curl -s -o /dev/null -w '%{http_code}' \
+" "$channel" <<< "$text" | curl -s -w '\n%{http_code}' \
     -X POST \
     -H "Authorization: Bearer ${SLACK_BOT_TOKEN}" \
     -H 'Content-type: application/json; charset=utf-8' \
     --data @- \
     'https://slack.com/api/chat.postMessage')
 
-  if [ "$http_code" -ge 200 ] && [ "$http_code" -lt 300 ]; then
-    echo "[notify] Slack bot post to ${channel} (HTTP ${http_code})"
-  else
+  # Split response: last line is HTTP code, everything before is the body
+  http_code=$(echo "$response" | tail -n1)
+  body=$(echo "$response" | sed '$d')
+
+  if ! { [ "$http_code" -ge 200 ] && [ "$http_code" -lt 300 ]; }; then
     echo "[notify] WARNING: Slack bot post to ${channel} failed (HTTP ${http_code})" >&2
     return 1
   fi
+
+  # Slack API returns HTTP 200 even on errors; check JSON "ok" field
+  local ok
+  ok=$(echo "$body" | python3 -c "import json,sys; print(json.load(sys.stdin).get('ok', False))" 2>/dev/null || echo "False")
+  if [ "$ok" != "True" ]; then
+    local err
+    err=$(echo "$body" | python3 -c "import json,sys; print(json.load(sys.stdin).get('error', 'unknown'))" 2>/dev/null || echo "unknown")
+    echo "[notify] WARNING: Slack bot post to ${channel} failed (ok=false, error=${err})" >&2
+    return 1
+  fi
+
+  echo "[notify] Slack bot post to ${channel} (HTTP ${http_code}, ok=true)"
 }
 
 _post_plan_to_slack() {

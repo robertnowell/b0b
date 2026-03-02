@@ -25,6 +25,8 @@ TASK_DESCRIPTION=""
 PRODUCT_GOAL=""
 USER_REQUEST=""
 TASK_PHASE="implementing"
+PARENT_TASK_ID=""
+WORKSPACE="false"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -40,6 +42,11 @@ while [[ $# -gt 0 ]]; do
     --phase)
       [[ $# -ge 2 ]] || { echo "ERROR: --phase requires a value" >&2; exit 1; }
       TASK_PHASE="$2"; shift 2 ;;
+    --parent-task-id)
+      [[ $# -ge 2 ]] || { echo "ERROR: --parent-task-id requires a value" >&2; exit 1; }
+      PARENT_TASK_ID="$2"; shift 2 ;;
+    --workspace)
+      WORKSPACE="true"; shift ;;
     *)
       POSITIONAL_ARGS+=("$1"); shift ;;
   esac
@@ -159,6 +166,8 @@ max_iterations = int(sys.argv[11])
 description = sys.argv[12]
 product_goal = sys.argv[13]
 user_request = sys.argv[14]
+workspace = sys.argv[15].lower() == 'true'
+parent_task_id = sys.argv[16]
 
 lock_fd = open(lock_file, 'w')
 fcntl.flock(lock_fd, fcntl.LOCK_EX)
@@ -193,7 +202,8 @@ try:
         auto_split_attempt_count = existing.get('autoSplitAttemptCount', 0)
         split_depth = existing.get('splitDepth', 0)
         parent_task = existing.get('parentTask')
-        workspace = existing.get('workspace', False)
+        workspace = existing.get('workspace', workspace)
+        parent_task_id = existing.get('parentTaskId', '') or parent_task_id
         created_at = existing.get('createdAt', existing.get('startedAt', started_at))
         tasks = [t for t in tasks if t.get('id') != task_id]
 
@@ -224,6 +234,8 @@ try:
         entry['parentTask'] = parent_task
     if workspace:
         entry['workspace'] = True
+    if parent_task_id:
+        entry['parentTaskId'] = parent_task_id
     tasks.append(entry)
 
     with open(tasks_file, 'w') as f:
@@ -232,7 +244,7 @@ try:
 finally:
     fcntl.flock(lock_fd, fcntl.LOCK_UN)
     lock_fd.close()
-" "$TASKS_FILE" "$LOCK_FILE" "$TASK_ID" "$BRANCH" "$AGENT" "$TMUX_SESSION" "$STARTED_AT" "$WORKTREE_DIR" "$LOG_FILE" "$TASK_PHASE" "$MAX_ITERATIONS" "$TASK_DESCRIPTION" "$PRODUCT_GOAL" "$USER_REQUEST"
+" "$TASKS_FILE" "$LOCK_FILE" "$TASK_ID" "$BRANCH" "$AGENT" "$TMUX_SESSION" "$STARTED_AT" "$WORKTREE_DIR" "$LOG_FILE" "$TASK_PHASE" "$MAX_ITERATIONS" "$TASK_DESCRIPTION" "$PRODUCT_GOAL" "$USER_REQUEST" "$WORKSPACE" "$PARENT_TASK_ID"
 
 echo "Spawned $AGENT agent"
 echo "  Task:      $TASK_ID"
