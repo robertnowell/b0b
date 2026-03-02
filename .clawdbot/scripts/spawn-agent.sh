@@ -182,6 +182,7 @@ try:
     auto_split_attempt_count = 0
     split_depth = 0
     parent_task = None
+    created_at = started_at
     if existing:
         iteration = existing.get('iteration', 0)
         findings = existing.get('findings', [])
@@ -192,6 +193,7 @@ try:
         split_depth = existing.get('splitDepth', 0)
         parent_task = existing.get('parentTask')
         workspace = existing.get('workspace', False)
+        created_at = existing.get('createdAt', existing.get('startedAt', started_at))
         tasks = [t for t in tasks if t.get('id') != task_id]
 
     entry = {
@@ -204,6 +206,7 @@ try:
         'iteration': iteration,
         'maxIterations': max_iterations,
         'startedAt': started_at,
+        'createdAt': created_at,
         'worktree': worktree,
         'logFile': log_file,
         'description': description,

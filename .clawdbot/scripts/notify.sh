@@ -32,18 +32,18 @@ _infer_next_step() {
   esac
 }
 
-_relative_time() {
-  # Given an ISO-8601 timestamp, return a human-readable relative time string
+_format_age() {
+  # Given an ISO-8601 timestamp, return a compound duration string (e.g. "2h 15m")
   local iso_ts="$1"
   [[ -z "$iso_ts" ]] && return
   local ts_epoch now_epoch diff_s
   ts_epoch=$(date -jf "%Y-%m-%dT%H:%M:%SZ" "$iso_ts" "+%s" 2>/dev/null || date -d "$iso_ts" "+%s" 2>/dev/null) || return
   now_epoch=$(date "+%s")
   diff_s=$((now_epoch - ts_epoch))
-  if (( diff_s < 60 )); then echo "just now"
-  elif (( diff_s < 3600 )); then echo "$(( diff_s / 60 ))m ago"
-  elif (( diff_s < 86400 )); then echo "$(( diff_s / 3600 ))h ago"
-  else echo "$(( diff_s / 86400 ))d ago"
+  if (( diff_s < 60 )); then echo "${diff_s}s"
+  elif (( diff_s < 3600 )); then echo "$(( diff_s / 60 ))m"
+  elif (( diff_s < 86400 )); then echo "$(( diff_s / 3600 ))h $(( (diff_s % 3600) / 60 ))m"
+  else echo "$(( diff_s / 86400 ))d $(( (diff_s % 86400) / 3600 ))h"
   fi
 }
 
@@ -72,21 +72,21 @@ notify() {
     next_step="$(_infer_next_step "$phase")"
   fi
 
-  local timestamp relative_str age_label
+  local timestamp age_str age_line
   timestamp="$(date +"%Y-%m-%d %H:%M %Z")"
-  relative_str=""
+  age_str=""
   if [[ -n "$started_at" ]]; then
-    relative_str=$(_relative_time "$started_at" 2>/dev/null || true)
+    age_str=$(_format_age "$started_at" 2>/dev/null || true)
   fi
-  age_label=""
-  if [[ -n "$relative_str" ]]; then
-    age_label=" | ⏱️ started ${relative_str}"
+  age_line=""
+  if [[ -n "$age_str" ]]; then
+    age_line=$'\n'"⏱️ *Age:* ${age_str} (started ${started_at})"
   fi
 
   local notification
   notification="$(cat <<EOF
-🔧 *Task:* ${task_id} | *Phase:* ${phase} | 🕐 ${timestamp}${age_label}
-📦 *Goal:* ${product_goal:-N/A}
+🔧 *Task:* ${task_id} | *Phase:* ${phase} | 🕐 ${timestamp}
+📦 *Goal:* ${product_goal:-N/A}${age_line}
 ⚙️ ${message}
 ➡️ *Next:* ${next_step}
 EOF
@@ -109,8 +109,11 @@ if sys.argv[2] == 'plan_review':
 plan_file = sys.argv[5] if len(sys.argv) > 5 else ''
 if plan_file:
     entry['planFile'] = plan_file
+started_at = sys.argv[6] if len(sys.argv) > 6 else ''
+if started_at:
+    entry['started_at'] = started_at
 print(json.dumps(entry))
-" "$task_id" "$phase" "${product_goal:-}" "$next_step" "${plan_file:-}" <<< "${message}
+" "$task_id" "$phase" "${product_goal:-}" "$next_step" "${plan_file:-}" "${started_at:-}" <<< "${message}
 ${notification}" >> "$NOTIFY_OUTBOX"
   fi
 

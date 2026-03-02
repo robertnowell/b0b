@@ -144,6 +144,29 @@ try:
         counts[effective] = counts.get(effective, 0) + 1
         result['lastLog'] = last_lines[-1] if last_lines else None
 
+        # Compute age and elapsed time
+        elapsed_seconds = None
+        age_str = ''
+        if started:
+            try:
+                start_dt = datetime.fromisoformat(started.replace('Z', '+00:00'))
+                elapsed = (now - start_dt).total_seconds()
+                elapsed_seconds = int(elapsed)
+                if elapsed < 60:
+                    age_str = f'{int(elapsed)}s'
+                elif elapsed < 3600:
+                    age_str = f'{int(elapsed // 60)}m'
+                elif elapsed < 86400:
+                    h, m = int(elapsed // 3600), int((elapsed % 3600) // 60)
+                    age_str = f'{h}h {m}m'
+                else:
+                    d, h = int(elapsed // 86400), int((elapsed % 86400) // 3600)
+                    age_str = f'{d}d {h}h'
+            except (ValueError, TypeError):
+                pass
+        result['age'] = age_str
+        result['elapsedSeconds'] = elapsed_seconds
+
         # Check for PR
         if branch:
             try:
