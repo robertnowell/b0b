@@ -508,7 +508,7 @@ for task in tasks:
     description = task.get('description', '')
 
     # Skip tasks that are already terminal or parked (plan_review is a human gate)
-    if phase in ('merged', 'plan_review', 'split'):
+    if phase in ('merged', 'plan_review', 'split', 'failed'):
         continue
 
     # Race guard: skip if another monitor run acted on this task within 60s
@@ -892,7 +892,7 @@ for task in tasks:
             if branch:
                 task_repo = get_task_repo(task)
                 pr_result = subprocess.run(
-                    ['gh', 'pr', 'list', '--head', branch, '--state', 'open', '--json', 'number', '--limit', '1'],
+                    ['gh', 'pr', 'list', '--head', branch, '--state', 'all', '--json', 'number', '--limit', '1'],
                     capture_output=True, text=True, cwd=task_repo)
                 if pr_result.returncode == 0 and pr_result.stdout.strip():
                     prs = json.loads(pr_result.stdout)
@@ -1237,30 +1237,84 @@ for task in tasks:
             changes_made += 1
 
         elif phase == 'pr_creating':
-            # Capture PR number immediately so it's available for all downstream phases
+            # Validate PR existence before advancing to reviewing.
             branch = task.get('branch', '')
+            task_repo = get_task_repo(task)
             pr_number = None
+            pr_lookup_reason = 'no_pr_found'
             if branch:
-                task_repo = get_task_repo(task)
                 pr_result = subprocess.run(
                     ['gh', 'pr', 'list', '--head', branch, '--state', 'all', '--json', 'number', '--limit', '1'],
                     capture_output=True, text=True, cwd=task_repo)
                 if pr_result.returncode == 0 and pr_result.stdout.strip():
-                    prs = json.loads(pr_result.stdout)
+                    try:
+                        prs = json.loads(pr_result.stdout)
+                    except json.JSONDecodeError:
+                        prs = []
+                        pr_lookup_reason = 'invalid_pr_list_json'
                     if prs:
                         pr_number = prs[0].get('number')
+                    else:
+                        pr_lookup_reason = 'no_pr_found'
+                elif pr_result.returncode != 0:
+                    pr_lookup_reason = f'gh_pr_list_failed_rc_{pr_result.returncode}'
+                else:
+                    pr_lookup_reason = 'empty_pr_list_output'
+            else:
+                pr_lookup_reason = 'missing_branch'
 
-            # Advance to reviewing
-            updates = {'phase': 'reviewing', 'status': 'reviewing'}
             if pr_number:
-                updates['prNumber'] = pr_number
-            apply_updates(tid, updates)
-
-            pr_label = f' (PR #{pr_number})' if pr_number else ''
-            run_notify(tid, 'reviewing',
-                f'PR created{pr_label}. Awaiting review.',
-                product_goal,
-                'Awaiting human review')
+                apply_updates(tid, {
+                    'phase': 'reviewing',
+                    'status': 'reviewing',
+                    'prNumber': pr_number,
+                    'missingPrRetryCount': 0,
+                })
+                run_notify(tid, 'reviewing',
+                    f'PR created (PR #{pr_number}). Awaiting review.',
+                    product_goal,
+                    'Awaiting human review')
+            else:
+                # If PR is missing after a successful pr_creating run, auto-remediate
+                # with bounded retries; then escalate to explicit terminal failure.
+                max_missing_pr_retries = 2
+                retry_count = int(task.get('missingPrRetryCount', 0))
+                if retry_count < max_missing_pr_retries:
+                    dispatch_fix = os.path.join(script_dir, 'dispatch-fix.sh')
+                    feedback = (
+                        'PR creation did not complete. Ensure branch changes are committed and pushed, '
+                        'then create or recover the PR with gh pr create (or equivalent), and verify it exists.'
+                    )
+                    fix_result = subprocess.run(
+                        [dispatch_fix, '--task-id', tid, '--feedback', feedback],
+                        capture_output=True, text=True, cwd=task_repo, env=_clean_env)
+                    next_retry = retry_count + 1
+                    if fix_result.returncode == 0:
+                        apply_updates(tid, {'missingPrRetryCount': next_retry})
+                        run_notify(tid, 'fixing',
+                            f'No PR found after pr_creating success ({pr_lookup_reason}). '
+                            f'Auto-dispatched remediation ({next_retry}/{max_missing_pr_retries}).',
+                            product_goal,
+                            'Remediating PR creation and push state')
+                    else:
+                        print(f'WARNING: dispatch-fix.sh failed for {tid} missing PR: {fix_result.stderr}')
+                        apply_updates(tid, {'missingPrRetryCount': next_retry})
+                        run_notify(tid, 'pr_creating',
+                            f'No PR found after pr_creating success ({pr_lookup_reason}). '
+                            f'Auto-remediation dispatch failed ({next_retry}/{max_missing_pr_retries}); will retry.',
+                            product_goal,
+                            'Waiting for next remediation attempt')
+                else:
+                    apply_updates(tid, {
+                        'phase': 'failed',
+                        'status': 'failed',
+                        'failReason': 'pr_missing_after_retries',
+                    })
+                    run_notify(tid, 'failed',
+                        f'No PR found after {retry_count} remediation attempt(s) '
+                        f'(reason: {pr_lookup_reason}). Manual intervention required.',
+                        product_goal,
+                        'Create/fix PR manually, then re-dispatch from reviewing')
             changes_made += 1
 
     # running tasks in non-terminal phases: no action needed (wait for completion)
