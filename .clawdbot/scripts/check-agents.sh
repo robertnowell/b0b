@@ -27,6 +27,8 @@ repo_root = sys.argv[1]
 tasks_file = sys.argv[2]
 lock_file = sys.argv[3]
 max_runtime = int(sys.argv[4])
+planning_timeout = int(sys.argv[7]) if len(sys.argv) > 7 else max_runtime
+
 def get_task_repo(task):
     return repo_root
 
@@ -109,13 +111,15 @@ try:
         result['agentDone'] = agent_done
         result['exitStatus'] = exit_status
 
-        # Check for timeout
+        # Check for timeout (phase-specific where defined)
         timed_out = False
         if started and tmux_alive and exit_status is None:
             try:
                 start_dt = datetime.fromisoformat(started.replace('Z', '+00:00'))
                 elapsed = (now - start_dt).total_seconds()
-                if elapsed > max_runtime:
+                phase_timeouts = {'planning': planning_timeout}
+                effective_timeout = phase_timeouts.get(phase, max_runtime)
+                if elapsed > effective_timeout:
                     timed_out = True
                     subprocess.run(['tmux', 'kill-session', '-t', tmux], capture_output=True)
                     fail_reason = 'timeout'
@@ -229,4 +233,4 @@ output = {
     }
 }
 print(json.dumps(output, indent=2))
-" "$REPO_ROOT" "$TASKS_FILE" "$LOCK_FILE" "$MAX_RUNTIME_SECONDS" "$MAX_ITERATIONS"
+" "$REPO_ROOT" "$TASKS_FILE" "$LOCK_FILE" "$MAX_RUNTIME_SECONDS" "$MAX_ITERATIONS" "$REPO_ROOT" "$PLANNING_TIMEOUT_SECONDS"

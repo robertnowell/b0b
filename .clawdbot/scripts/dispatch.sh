@@ -43,7 +43,7 @@ PLAN_FILE=""
 AGENT=""
 MODEL=""
 PHASE="planning"
-REQUIRE_PLAN_REVIEW="true"
+REQUIRE_PLAN_REVIEW="false"
 USER_REQUEST=""
 
 while [[ $# -gt 0 ]]; do
