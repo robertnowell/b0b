@@ -23,6 +23,28 @@ MAX_AUTO_RETRIES="${MAX_AUTO_RETRIES:-1}"   # Max times a task can auto-retry fr
 MAX_SPLIT_DEPTH="${MAX_SPLIT_DEPTH:-1}"     # Max depth of auto-split (no splitting splits of splits)
 MAX_AUTO_SPLIT_ATTEMPTS="${MAX_AUTO_SPLIT_ATTEMPTS:-2}"  # Max failed auto-split attempts before terminal needs_split
 
+# Usage: eval "$(get_task_paths true)"  or  eval "$(get_task_paths false)"
+# Sets: EFFECTIVE_REPO, EFFECTIVE_WORKTREE_BASE
+get_task_paths() {
+  local is_workspace="${1:-false}"
+  if [ "$is_workspace" = "true" ]; then
+    echo "EFFECTIVE_REPO='$WORKSPACE_REPO'"
+    echo "EFFECTIVE_WORKTREE_BASE='$WORKSPACE_WORKTREE_BASE'"
+  else
+    echo "EFFECTIVE_REPO='$REPO_ROOT'"
+    echo "EFFECTIVE_WORKTREE_BASE='$WORKTREE_BASE'"
+  fi
+}
+
+# GitHub comment dispatch config
+GH_COMMENT_DISPATCH_ENABLED="${GH_COMMENT_DISPATCH_ENABLED:-true}"
+GH_COMMENT_DEFAULT_AGENT="${GH_COMMENT_DEFAULT_AGENT:-claude}"
+GH_COMMENT_REQUIRE_PLAN_REVIEW="${GH_COMMENT_REQUIRE_PLAN_REVIEW:-true}"
+GH_COMMENT_MAX_DISPATCHES="${GH_COMMENT_MAX_DISPATCHES:-3}"
+GH_POLL_STATE_FILE="${GH_POLL_STATE_FILE:-${STATE_DIR}/gh-poll-state.json}"
+GH_COMMENT_ALLOWED_USERS="${GH_COMMENT_ALLOWED_USERS:-kopi}"
+GH_COMMENT_QUEUE_FILE="${STATE_DIR}/gh-comment-queue.jsonl"
+
 CLAUDE_PATH="${CLAUDE_PATH:-claude}"
 CODEX_PATH="${CODEX_PATH:-codex}"
 SLACK_BOT_TOKEN="${SLACK_BOT_TOKEN:-}"
