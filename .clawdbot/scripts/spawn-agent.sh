@@ -205,6 +205,12 @@ try:
         workspace = existing.get('workspace', workspace)
         parent_task_id = existing.get('parentTaskId', '') or parent_task_id
         created_at = existing.get('createdAt', existing.get('startedAt', started_at))
+        # Preserve PR/comment tracking fields that aren't passed via CLI args
+        source_number = existing.get('sourceNumber')
+        pr_number = existing.get('prNumber')
+        source_comment_id = existing.get('sourceCommentId')
+        source_comment_url = existing.get('sourceCommentUrl')
+        conflict_fix_count = existing.get('conflictFixCount', 0)
         tasks = [t for t in tasks if t.get('id') != task_id]
 
     entry = {
@@ -236,6 +242,17 @@ try:
         entry['workspace'] = True
     if parent_task_id:
         entry['parentTaskId'] = parent_task_id
+    if existing:
+        if source_number:
+            entry['sourceNumber'] = source_number
+        if pr_number is not None:
+            entry['prNumber'] = pr_number
+        if source_comment_id:
+            entry['sourceCommentId'] = source_comment_id
+        if source_comment_url:
+            entry['sourceCommentUrl'] = source_comment_url
+        if conflict_fix_count:
+            entry['conflictFixCount'] = conflict_fix_count
     tasks.append(entry)
 
     with open(tasks_file, 'w') as f:
@@ -259,10 +276,3 @@ fi
 if [ -n "$PRODUCT_GOAL" ]; then
   echo "  Goal:      $PRODUCT_GOAL"
 fi
-
-# Send Slack notification
-notify \
-  --task-id "$TASK_ID" \
-  --phase "$TASK_PHASE" \
-  --message "Agent spawned (${AGENT}). ${TASK_DESCRIPTION:-No description}" \
-  --product-goal "${PRODUCT_GOAL:-N/A}"
