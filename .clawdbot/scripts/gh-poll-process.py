@@ -79,6 +79,6 @@ for c in review_comments:
         seen.add(comment_id)
         new_seen.append(comment_id)
 
-# Update state — keep last 200 IDs
-state = {"lastChecked": now, "seenCommentIds": new_seen[-200:]}
-json.dump(state, open(state_file, "w"), indent=2)
+# Output proposed new state as final tagged line (caller commits after processing)
+new_state = {"lastChecked": now, "seenCommentIds": new_seen[-200:]}
+print(json.dumps({"_type": "state_update", "state": new_state}))
