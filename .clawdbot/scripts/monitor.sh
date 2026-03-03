@@ -1319,6 +1319,14 @@ for task in tasks:
                     f'Fixes applied for PR feedback. Re-checking CI.',
                     product_goal,
                     'Awaiting CI re-check')
+                # Post feedback-addressed comment on the PR
+                pr_num = task.get('prNumber')
+                feedback = task.get('lastFeedback', '')
+                if pr_num and feedback:
+                    body = f'## Feedback Addressed\\n\\n{feedback}\\n\\n---\\n*Posted by Kopiclaw pipeline*'
+                    subprocess.run(
+                        ['gh', 'issue', 'comment', str(pr_num), '--repo', 'tryrendition/Rendition', '--body', body],
+                        capture_output=True, text=True, cwd=repo_root, env=_clean_env)
             elif fix_target == 'testing':
                 run_notify(tid, 'testing',
                     f'Fixes applied. Re-running tests (iteration {iteration}/{max_iter})',
@@ -1382,6 +1390,16 @@ for task in tasks:
                     f'PR created (PR #{pr_number}). Awaiting review.',
                     product_goal,
                     'Awaiting human review')
+                # Post implementation plan as PR comment
+                plan_path = os.path.join(plans_dir, f'{tid}.md')
+                if os.path.isfile(plan_path):
+                    with open(plan_path) as pf:
+                        plan_text = pf.read().strip()
+                    if plan_text:
+                        body = f'## Implementation Plan\\n\\n{plan_text}\\n\\n---\\n*Posted by Kopiclaw pipeline*'
+                        subprocess.run(
+                            ['gh', 'issue', 'comment', str(pr_number), '--repo', 'tryrendition/Rendition', '--body', body],
+                            capture_output=True, text=True, cwd=task_repo, env=_clean_env)
             else:
                 # If PR is missing after a successful pr_creating run, auto-remediate
                 # with bounded retries; then escalate to explicit terminal failure.
