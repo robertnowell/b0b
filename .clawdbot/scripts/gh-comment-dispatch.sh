@@ -224,6 +224,41 @@ finally:
 " "$TASKS_FILE" "$LOCK_FILE" "$task_id" "$@"
 }
 
+merge_task_image_files() {
+  local task_id="$1"
+  local new_images_json="$2"
+  python3 -c "
+import json, sys, fcntl
+tasks_file = sys.argv[1]
+lock_file = sys.argv[2]
+task_id = sys.argv[3]
+new_images = json.loads(sys.argv[4])
+fd = open(lock_file, 'w')
+fcntl.flock(fd, fcntl.LOCK_EX)
+try:
+    with open(tasks_file) as f:
+        tasks = json.load(f)
+    for t in tasks:
+        if t.get('id', '') == task_id:
+            existing = t.get('imageFiles', [])
+            if not isinstance(existing, list):
+                existing = []
+            seen = set(existing)
+            for img in new_images:
+                if img not in seen:
+                    existing.append(img)
+                    seen.add(img)
+            t['imageFiles'] = existing
+            break
+    with open(tasks_file, 'w') as f:
+        json.dump(tasks, f, indent=2)
+        f.write('\n')
+finally:
+    fcntl.flock(fd, fcntl.LOCK_UN)
+    fd.close()
+" "$TASKS_FILE" "$LOCK_FILE" "$task_id" "$new_images_json"
+}
+
 append_finding() {
   local task_id="$1"
   local finding="$2"
@@ -506,9 +541,9 @@ print(json.dumps(paths))
   if [ -n "$existing_task" ]; then
     echo "Active task ${existing_task} found for #${number} — routing as feedback"
     append_finding "$existing_task" "GitHub comment from ${author} on #${number}: ${body}"
-    # Store image paths on existing task so all phases can access them
+    # Merge image paths into existing task (accumulates across comments)
     if [ -n "$image_json" ]; then
-      apply_task_update "$existing_task" "imageFiles=${image_json}"
+      merge_task_image_files "$existing_task" "$image_json"
     fi
 
     task_phase=$(python3 -c "
@@ -570,7 +605,8 @@ print(task.get('phase', '') if task else '')
     --agent "$agent" \
     --phase planning \
     --require-plan-review "$require_review" \
-    --user-request "$body" || {
+    --user-request "$body" \
+    --image-files "$image_paths" || {
     echo "ERROR: dispatch.sh failed for task ${task_id}"
     continue
   }

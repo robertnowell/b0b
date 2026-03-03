@@ -65,6 +65,19 @@ BRANCH=$(echo "$TASK_JSON" | python3 -c "import json,sys; print(json.load(sys.st
 AGENT=$(echo "$TASK_JSON" | python3 -c "import json,sys; t=json.load(sys.stdin); print(sys.argv[1] if sys.argv[1] else t.get('agent','claude'))" "$AGENT_OVERRIDE")
 DESCRIPTION=$(echo "$TASK_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('description',''))")
 PRODUCT_GOAL=$(echo "$TASK_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('productGoal',''))")
+USER_REQUEST=$(echo "$TASK_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('userRequest',''))")
+IMAGE_FILES=$(echo "$TASK_JSON" | python3 -c "import json,sys; t=json.load(sys.stdin); files=t.get('imageFiles',[]); print('\n'.join(files) if isinstance(files,list) else '')")
+
+# Build IMAGES text from image file paths
+IMAGES_TEXT=""
+if [ -n "$IMAGE_FILES" ]; then
+  IMAGES_TEXT="Visual context from the original request. Read these image files to see screenshots:"
+  while IFS= read -r img_path; do
+    [ -z "$img_path" ] && continue
+    IMAGES_TEXT="${IMAGES_TEXT}
+- ${img_path}"
+  done <<< "$IMAGE_FILES"
+fi
 
 # Fill fix-feedback prompt with the feedback
 TEMPLATE="${PROMPTS_DIR}/fix-feedback.md"
@@ -82,6 +95,8 @@ mkdir -p "$LOG_DIR"
   --var DELIVERABLES="$DESCRIPTION" \
   --var FEATURE="$DESCRIPTION" \
   --var DIFF="" \
+  --var IMAGES="$IMAGES_TEXT" \
+  --var USER_REQUEST="$USER_REQUEST" \
   > "$FILLED_PROMPT"
 
 # Spawn agent — spawn-agent.sh will reuse existing worktree
