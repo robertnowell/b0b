@@ -45,6 +45,7 @@ MODEL=""
 PHASE="planning"
 REQUIRE_PLAN_REVIEW="false"
 USER_REQUEST=""
+IMAGE_FILES=""
 PARENT_TASK_ID=""
 WORKSPACE="false"
 
@@ -60,6 +61,7 @@ while [[ $# -gt 0 ]]; do
     --phase)                [[ $# -ge 2 ]] || { echo "ERROR: --phase requires a value" >&2; exit 1; };                PHASE="$2"; shift 2 ;;
     --require-plan-review)  [[ $# -ge 2 ]] || { echo "ERROR: --require-plan-review requires a value" >&2; exit 1; };  REQUIRE_PLAN_REVIEW="$2"; shift 2 ;;
     --user-request)         [[ $# -ge 2 ]] || { echo "ERROR: --user-request requires a value" >&2; exit 1; };         USER_REQUEST="$2"; shift 2 ;;
+    --image-files)          [[ $# -ge 2 ]] || { echo "ERROR: --image-files requires a value" >&2; exit 1; };          IMAGE_FILES="$2"; shift 2 ;;
     --parent-task-id)       [[ $# -ge 2 ]] || { echo "ERROR: --parent-task-id requires a value" >&2; exit 1; };  PARENT_TASK_ID="$2"; shift 2 ;;
     --workspace)            WORKSPACE="true"; shift ;;
     *) echo "ERROR: Unknown argument: $1" >&2; exit 1 ;;
@@ -98,6 +100,17 @@ if [[ -n "$PLAN_FILE" ]]; then
   PLAN_CONTENT="$(cat "$PLAN_FILE")"
 fi
 
+# --- Build IMAGES text from image file paths ---
+IMAGES_TEXT=""
+if [ -n "$IMAGE_FILES" ]; then
+  IMAGES_TEXT="Visual context from the original request. Read these image files to see screenshots:"
+  while IFS= read -r img_path; do
+    [ -z "$img_path" ] && continue
+    IMAGES_TEXT="${IMAGES_TEXT}
+- ${img_path}"
+  done <<< "$IMAGE_FILES"
+fi
+
 # --- Determine which template to use based on phase ---
 case "$PHASE" in
   planning)     TEMPLATE="${PROMPTS_DIR}/plan.md" ;;
@@ -129,7 +142,7 @@ mkdir -p "$LOG_DIR"
   --var DIFF="$PLAN_CONTENT" \
   --var TASK_ID="$TASK_ID" \
   --var USER_REQUEST="$USER_REQUEST" \
-  --var IMAGES="" \
+  --var IMAGES="$IMAGES_TEXT" \
   > "$FILLED_PROMPT_FILE"
 
 # --- Spawn the agent ---

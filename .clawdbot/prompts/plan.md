@@ -15,6 +15,8 @@ Read CLAUDE.md for repo conventions, project structure, and tooling.
 ## Original Request
 {USER_REQUEST}
 
+{IMAGES}
+
 ## Deliverables
 {DELIVERABLES}
 
