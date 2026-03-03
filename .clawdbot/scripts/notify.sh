@@ -169,7 +169,21 @@ EOF
     echo "[notify] No SLACK_BOT_TOKEN configured — skipping Slack delivery" >&2
   fi
 
-  # For plan_review: post full plan to #project-kopi-claw with @mention
+  # Post full plan to #alerts when a plan file is available (all plans, not just plan_review)
+  if [ -n "${SLACK_BOT_TOKEN:-}" ] && [ -n "$plan_file" ] && [ -f "$plan_file" ]; then
+    local full_plan
+    full_plan="$(cat "$plan_file")"
+    _slack_bot_post "$SLACK_ALERTS_CHANNEL" <<EOF
+:clipboard: *Full plan for:* \`${task_id}\`
+:package: *Goal:* ${product_goal:-N/A}
+
+---
+
+${full_plan}
+EOF
+  fi
+
+  # For plan_review: also post full plan to #project-kopi-claw with @mention
   if [ "$phase" = "plan_review" ]; then
     _post_plan_to_slack "$task_id" "$message" "$product_goal"
   fi

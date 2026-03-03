@@ -6,6 +6,8 @@
 ## Implementation Plan
 {PLAN}
 
+{IMAGES}
+
 ## Your Task
 Audit this implementation against the PRD and plan. Check:
 1. Does the implementation match the PRD requirements?

@@ -3,6 +3,8 @@
 ## Original Task
 {TASK_DESCRIPTION}
 
+{IMAGES}
+
 ## Feedback to Address
 {FEEDBACK}
 

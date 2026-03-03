@@ -128,6 +128,8 @@ mkdir -p "$LOG_DIR"
   --var PRODUCT_GOAL="$PRODUCT_GOAL" \
   --var DIFF="$PLAN_CONTENT" \
   --var TASK_ID="$TASK_ID" \
+  --var USER_REQUEST="$USER_REQUEST" \
+  --var IMAGES="" \
   > "$FILLED_PROMPT_FILE"
 
 # --- Spawn the agent ---

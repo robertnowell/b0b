@@ -48,7 +48,7 @@ for c in issue_comments:
             "commentId": comment_id,
             "number": number,
             "author": get_comment_author(c),
-            "body": body[:500],
+            "body": body[:4000],
             "url": c.get("html_url", ""),
             "created": c.get("created_at", ""),
             "isPR": is_pr
@@ -71,7 +71,7 @@ for c in review_comments:
             "commentId": comment_id,
             "number": number,
             "author": get_comment_author(c),
-            "body": body[:500],
+            "body": body[:4000],
             "url": c.get("html_url", ""),
             "created": c.get("created_at", ""),
             "isPR": True

@@ -12,6 +12,8 @@ Read CLAUDE.md for repo conventions.
 ## Deliverables
 {DELIVERABLES}
 
+{IMAGES}
+
 ## Instructions
 1. Implement according to the plan above
 2. Follow all conventions in CLAUDE.md

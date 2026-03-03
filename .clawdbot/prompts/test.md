@@ -9,6 +9,8 @@ Read CLAUDE.md for repo conventions.
 ## Product Goal
 {PRODUCT_GOAL}
 
+{IMAGES}
+
 ## Implementation Diff
 {DIFF}
 
