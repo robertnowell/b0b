@@ -80,6 +80,14 @@ def phase_emoji(phase):
 ACTIVE_PHASES = {'planning', 'plan_review', 'implementing', 'auditing', 'fixing', 'testing', 'pr_creating'}
 REVIEW_PHASES = {'reviewing', 'pr_ready'}
 
+# Build set of superseded task IDs (hide these from display)
+superseded_ids = set()
+for task in tasks:
+    if task.get('redispatchedTo'):
+        superseded_ids.add(task['id'])
+    if task.get('phase') == 'split' and task.get('subtasks'):
+        superseded_ids.add(task['id'])
+
 # Categorize tasks
 active = []
 in_review = []
@@ -90,6 +98,11 @@ failed = []
 for task in tasks:
     tid = task.get('id', '?')
     phase = task.get('phase', '')
+
+    # Skip superseded tasks
+    if tid in superseded_ids:
+        continue
+
     created_at = parse_iso(task.get('createdAt', '')) or parse_iso(task.get('startedAt', ''))
     completed_at = parse_iso(task.get('completedAt', ''))
 
@@ -109,9 +122,6 @@ for task in tasks:
     elif phase in REVIEW_PHASES:
         in_review.append(entry)
     elif phase == 'needs_split':
-        # Check if redispatched — if so, skip (the new task will show)
-        if task.get('redispatchedTo'):
-            continue
         needs_attention.append(entry)
     elif phase == 'merged':
         if completed_at and (now - completed_at).total_seconds() < DAY_SECONDS:
@@ -126,7 +136,10 @@ for section in [active, in_review, needs_attention, merged, failed]:
     section.sort(key=lambda e: e['created_at'] or datetime.min.replace(tzinfo=timezone.utc))
 
 # Format output
-now_str = now.strftime('%a %b %-d, %-I:%M %p') + ' UTC'
+import time as _time
+local_now = datetime.now()
+tz_abbr = _time.strftime('%Z')
+now_str = local_now.strftime('%a %b %-d, %-I:%M %p') + f' {tz_abbr}'
 lines = [f'\U0001f4ca *Pipeline Status* \u2014 {now_str}']
 
 def format_entry(e):
@@ -140,7 +153,7 @@ def format_entry(e):
             extra = ' (auto-recovery exhausted)'
         elif retry_count > 0:
             extra = f' (retried {retry_count}x)'
-    return f\"\u2022 \`{e['id']}\` \u2014 {phase_display} {e['emoji']}{extra} ({e['age']})\"
+    return f\"\u2022 \`{e['id']}\` \u2014 {phase_display} {e['emoji']}{extra} ({e['age']} ago)\"
 
 if active:
     lines.append('')

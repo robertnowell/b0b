@@ -104,6 +104,8 @@ _API_ISSUE_PATTERNS = [
     (re.compile(r'invalid.*api.key', re.IGNORECASE), 'invalid_key'),
     (re.compile(r'api.key.*invalid', re.IGNORECASE), 'invalid_key'),
     (re.compile(r'unauthorized|authentication.*fail', re.IGNORECASE), 'auth_error'),
+    (re.compile(r'temporarily limited.*(?:suspicious|cybersecurity)', re.IGNORECASE), 'account_blocked'),
+    (re.compile(r'access.*(?:blocked|suspended|disabled)', re.IGNORECASE), 'account_blocked'),
 ]
 
 def detect_api_issue(text):
@@ -118,18 +120,27 @@ def check_and_alert_api_issues(task, new_finding=''):
     \"\"\"Scan task findings for API issues and send a dedicated alert if not already alerted.\"\"\"
     if task.get('apiIssueAlerted'):
         return None
-    # Check new finding first, then all findings
+    # Check new finding, all findings, and log file tail
     texts_to_check = []
     if new_finding:
         texts_to_check.append(new_finding)
     texts_to_check.extend(task.get('findings', []))
+    # Also check log file tail for errors not captured in findings
+    log_file = task.get('logFile', '')
+    if log_file and os.path.exists(log_file):
+        try:
+            with open(log_file) as f:
+                content = f.read()
+            texts_to_check.append(content[-2000:] if len(content) > 2000 else content)
+        except (IOError, OSError):
+            pass
     for text in texts_to_check:
         result = detect_api_issue(text)
         if result:
             issue_type, matched = result
             tid = task.get('id', '?')
             agent = task.get('agent', '?')
-            issue_labels = {'rate_limit': 'Rate limit hit', 'invalid_key': 'Invalid API key', 'auth_error': 'Authentication error'}
+            issue_labels = {'rate_limit': 'Rate limit hit', 'invalid_key': 'Invalid API key', 'auth_error': 'Authentication error', 'account_blocked': 'Account blocked/suspended'}
             issue_label = issue_labels.get(issue_type, issue_type)
             product_goal = task.get('productGoal', '')
             alert_msg = (
@@ -828,45 +839,37 @@ for task in tasks:
             changes_made += 1
 
         else:
-            # Re-dispatch: fresh start on a new branch, carrying forward learnings
-            should_redispatch = (
+            # Reset in place: revert worktree, keep findings as learnings, re-plan
+            should_reset = (
                 task.get('redispatchCount', 0) < 1
                 and split_depth == 0
                 and description and product_goal
             )
-            if should_redispatch:
-                dispatch_script = os.path.join(script_dir, 'dispatch.sh')
-                new_task_id = f'{tid}-v2'
-                new_branch = f'{task.get("branch", tid)}-v2'
-                learnings = '\n'.join(f'- {f}' for f in task.get('findings', [])[-5:])
-                new_description = f'{description}\n\nLearnings from previous attempt:\n{learnings}'
-
-                dispatch_cmd = [
-                    dispatch_script,
-                    '--task-id', new_task_id,
-                    '--branch', new_branch,
-                    '--product-goal', product_goal,
-                    '--description', new_description,
-                    '--agent', task.get('agent', 'claude'),
-                    '--phase', 'planning',
-                    '--require-plan-review', 'false',
-                ]
-                d_result = subprocess.run(dispatch_cmd, capture_output=True, text=True,
-                                          cwd=get_task_repo(task), env=_clean_env)
-                if d_result.returncode == 0:
+            if should_reset:
+                auto_revert(task)
+                reset_findings = task.get('findings', []) + ['Auto-recovery exhausted \u2014 resetting for fresh attempt']
+                task['iteration'] = 0
+                task['findings'] = reset_findings
+                task['redispatchCount'] = 1
+                task['autoRetryCount'] = 0
+                ok = spawn_agent(task, 'planning', 'plan.md', task.get('agent'))
+                if ok:
                     apply_updates(tid, {
+                        'phase': 'planning',
+                        'status': 'running',
+                        'iteration': 0,
+                        'findings': reset_findings,
                         'redispatchCount': 1,
-                        'redispatchedTo': new_task_id,
-                        'findings': task.get('findings', []) + [f'Re-dispatched as {new_task_id}'],
+                        'autoSplitAttemptCount': 0,
+                        'autoRetryCount': 0,
                     })
-                    apply_updates(new_task_id, {'splitDepth': 0, 'parentTask': tid})
-                    run_notify(tid, 'needs_split',
-                        f'Re-dispatched as fresh task {new_task_id}',
+                    run_notify(tid, 'planning',
+                        f'Auto-recovery exhausted \u2014 resetting task for fresh attempt',
                         product_goal,
-                        f'New task {new_task_id} starting from planning')
+                        'Re-planning from scratch with learnings')
                 else:
-                    print(f'WARNING: Re-dispatch failed for {tid}: {d_result.stderr}')
-                    run_notify(tid, 'needs_split', f'Re-dispatch failed', product_goal)
+                    print(f'ERROR: Reset spawn failed for {tid}')
+                    run_notify(tid, 'needs_split', f'Reset spawn failed', product_goal)
                 changes_made += 1
             # else: truly terminal — needs human intervention, do nothing
         continue
