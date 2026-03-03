@@ -3,6 +3,7 @@
 import json, sys
 
 MENTION = "@kopi-claw"
+BOT_AUTHORS = {"kopi-claw", "github-actions[bot]", "github-actions"}
 
 state_file = sys.argv[1]
 now = sys.argv[2]
@@ -37,7 +38,7 @@ for c in issue_comments:
     body = get_comment_body(c)
     if comment_id is None:
         continue
-    if MENTION in body and comment_id not in seen:
+    if MENTION in body and comment_id not in seen and get_comment_author(c) not in BOT_AUTHORS:
         issue_url = c.get("issue_url", "")
         number = issue_url.rstrip("/").split("/")[-1] if issue_url else "unknown"
         if not number.isdigit():
@@ -61,7 +62,7 @@ for c in review_comments:
     body = get_comment_body(c)
     if comment_id is None:
         continue
-    if MENTION in body and comment_id not in seen:
+    if MENTION in body and comment_id not in seen and get_comment_author(c) not in BOT_AUTHORS:
         pr_url = c.get("pull_request_url", "")
         number = pr_url.rstrip("/").split("/")[-1] if pr_url else "unknown"
         if not number.isdigit():
