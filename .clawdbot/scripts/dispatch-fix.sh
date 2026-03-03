@@ -91,10 +91,10 @@ SPAWN_ARGS=("$TASK_ID" "$BRANCH" "$AGENT" "$FILLED_PROMPT" ""
   --product-goal "$PRODUCT_GOAL")
 "$SPAWN" "${SPAWN_ARGS[@]}"
 
-# Update task state: set fixTarget to reviewing
+# Update task state: set fixTarget to reviewing and store feedback for PR comment
 python3 -c "
 import json, sys, fcntl
-tasks_file, lock_file, task_id = sys.argv[1], sys.argv[2], sys.argv[3]
+tasks_file, lock_file, task_id, feedback = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 fd = open(lock_file, 'w')
 fcntl.flock(fd, fcntl.LOCK_EX)
 try:
@@ -103,6 +103,7 @@ try:
     for t in tasks:
         if t['id'] == task_id:
             t['fixTarget'] = 'reviewing'
+            t['lastFeedback'] = feedback
             break
     with open(tasks_file, 'w') as f:
         json.dump(tasks, f, indent=2)
@@ -110,7 +111,7 @@ try:
 finally:
     fcntl.flock(fd, fcntl.LOCK_UN)
     fd.close()
-" "$TASKS_FILE" "$LOCK_FILE" "$TASK_ID"
+" "$TASKS_FILE" "$LOCK_FILE" "$TASK_ID" "$FEEDBACK"
 
 notify \
   --task-id "$TASK_ID" \
