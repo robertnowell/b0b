@@ -3,6 +3,8 @@
 ## Task
 {TASK_DESCRIPTION}
 
+{IMAGES}
+
 ## Instructions
 1. Ensure all changes are committed
 2. Run `pnpm lint` and `pnpm build` in changed packages — fix any errors

@@ -51,6 +51,39 @@ fi
 
 # --- Helpers ---
 
+download_comment_images() {
+  # Extract and download GitHub user-attachment images from comment body.
+  # Returns newline-separated local file paths of downloaded images.
+  local body="$1"
+  local comment_id="$2"
+  local image_dir="${STATE_DIR}/images/${comment_id}"
+
+  local urls
+  urls=$(echo "$body" | python3 -c "
+import sys, re
+body = sys.stdin.read()
+urls = re.findall(r'src=\"(https://github\.com/user-attachments/assets/[^\"]+)\"', body)
+urls += re.findall(r'!\[.*?\]\((https://github\.com/user-attachments/assets/[^)]+)\)', body)
+for u in sorted(set(urls)):
+    print(u)
+" 2>/dev/null) || return
+
+  [ -z "$urls" ] && return
+
+  mkdir -p "$image_dir"
+  local token idx=1
+  token=$(gh auth token 2>/dev/null) || return
+
+  while IFS= read -r url; do
+    [ -z "$url" ] && continue
+    local outfile="${image_dir}/image-${idx}.png"
+    if curl -sL -H "Authorization: token ${token}" "$url" -o "$outfile" 2>/dev/null && [ -s "$outfile" ]; then
+      echo "$outfile"
+      idx=$((idx + 1))
+    fi
+  done <<< "$urls"
+}
+
 slugify() {
   # First 4 words, lowercased, joined with hyphens
   echo "$1" | tr '[:upper:]' '[:lower:]' | \
@@ -177,7 +210,10 @@ try:
     for t in tasks:
         if t.get('id', '') == task_id:
             for k, v in updates.items():
-                t[k] = v
+                try:
+                    t[k] = json.loads(v)
+                except (json.JSONDecodeError, ValueError):
+                    t[k] = v
             break
     with open(tasks_file, 'w') as f:
         json.dump(tasks, f, indent=2)
@@ -403,6 +439,24 @@ print(json.dumps({
   # Use comment body as task description (strip @kopi-claw mention, take first 200 chars)
   task_desc=$(echo "$body" | sed 's/@kopi-claw//gI' | tr '\n' ' ' | sed 's/  */ /g' | cut -c1-200)
 
+  # Download any attached screenshots so agents can view them
+  image_paths=$(download_comment_images "$body" "$comment_id" 2>/dev/null) || image_paths=""
+  image_json=""
+  if [ -n "$image_paths" ]; then
+    body="${body}
+
+## Screenshots
+The reviewer attached screenshots. Read these image files to see them:
+${image_paths}"
+    echo "Downloaded images for comment ${comment_id}: $(echo "$image_paths" | tr '\n' ' ')"
+    # Build JSON array of image paths for storing on task object
+    image_json=$(echo "$image_paths" | python3 -c "
+import sys, json
+paths = [l.strip() for l in sys.stdin if l.strip()]
+print(json.dumps(paths))
+" 2>/dev/null) || image_json=""
+  fi
+
   echo "Comment ${comment_id} from ${author} on #${number}"
 
   # Skip closed/merged PRs and issues — no point dispatching work for them
@@ -451,7 +505,11 @@ print(json.dumps({
   existing_task=$(find_task_by_number "$number") || existing_task=""
   if [ -n "$existing_task" ]; then
     echo "Active task ${existing_task} found for #${number} — routing as feedback"
-    append_finding "$existing_task" "GitHub comment from ${author} on #${number}: ${task_desc}"
+    append_finding "$existing_task" "GitHub comment from ${author} on #${number}: ${body}"
+    # Store image paths on existing task so all phases can access them
+    if [ -n "$image_json" ]; then
+      apply_task_update "$existing_task" "imageFiles=${image_json}"
+    fi
 
     task_phase=$(python3 -c "
 import json, sys
@@ -466,7 +524,7 @@ print(task.get('phase', '') if task else '')
         DISPATCH_FIX="${SCRIPT_DIR}/dispatch-fix.sh"
         "$DISPATCH_FIX" \
           --task-id "$existing_task" \
-          --feedback "GitHub comment from ${author} on #${number}: ${task_desc}" || {
+          --feedback "GitHub comment from ${author} on #${number}: ${body}" || {
           echo "WARNING: dispatch-fix.sh failed for ${existing_task}"
         }
         gh_reply "$number" "$comment_id" "$comment_type" "Feedback applied to existing task \`${existing_task}\` — fix agent dispatched."
@@ -521,6 +579,11 @@ print(task.get('phase', '') if task else '')
     "sourceNumber=$number" \
     "sourceCommentId=$comment_id" \
     "sourceCommentUrl=$comment_url"
+
+  # Store image paths on task so all pipeline phases can access them
+  if [ -n "$image_json" ]; then
+    apply_task_update "$task_id" "imageFiles=${image_json}"
+  fi
 
   add_reaction "$comment_id" "$comment_type" "rocket"
 

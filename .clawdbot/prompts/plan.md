@@ -12,6 +12,9 @@ Read CLAUDE.md for repo conventions, project structure, and tooling.
 ## PRD
 {PRD}
 
+## Original Request
+{USER_REQUEST}
+
 ## Deliverables
 {DELIVERABLES}
 

@@ -391,6 +391,13 @@ def spawn_agent(task, phase, prompt_template, agent_override=None):
         print(f'WARNING: Could not read prompt template {prompt_path}: {e}')
         return False
 
+    # Build images instruction from task.imageFiles
+    _image_files = task.get('imageFiles', [])
+    if _image_files and isinstance(_image_files, list):
+        _images_text = 'Visual context from the original request. Read these image files to see screenshots:\\n' + '\\n'.join(f'- {p}' for p in _image_files)
+    else:
+        _images_text = ''
+
     _vars = {
         'TASK_DESCRIPTION': description,
         'PRD': product_goal,
@@ -402,6 +409,8 @@ def spawn_agent(task, phase, prompt_template, agent_override=None):
         'PRODUCT_GOAL': product_goal,
         'DIFF': plan_text,
         'TASK_ID': tid,
+        'IMAGES': _images_text,
+        'USER_REQUEST': task.get('userRequest', ''),
     }
     for _k, _v in _vars.items():
         prompt_content = prompt_content.replace('{' + _k + '}', _v)
@@ -1134,7 +1143,8 @@ for task in tasks:
                     run_notify(tid, 'implementing',
                         f'Plan auto-approved (requiresPlanReview=false). Starting implementation.',
                         product_goal,
-                        'Starting implementation')
+                        'Starting implementation',
+                        plan_file=plan_file)
                     ok = spawn_agent(task, 'implementing', 'implement.md', task.get('agent'))
                     if ok:
                         apply_updates(tid, {
