@@ -95,6 +95,58 @@ def run_notify(task_id, phase, message, product_goal='', next_step='', started_a
         cmd += ['--plan-file', plan_file]
     subprocess.run(cmd, input=message, capture_output=True, text=True, env=_clean_env)
 
+# --- API issue detection ---
+_API_ISSUE_PATTERNS = [
+    (re.compile(r'hit your.*(limit|quota)', re.IGNORECASE), 'rate_limit'),
+    (re.compile(r'rate.limit', re.IGNORECASE), 'rate_limit'),
+    (re.compile(r'usage.limit', re.IGNORECASE), 'rate_limit'),
+    (re.compile(r'exceeded.*quota', re.IGNORECASE), 'rate_limit'),
+    (re.compile(r'invalid.*api.key', re.IGNORECASE), 'invalid_key'),
+    (re.compile(r'api.key.*invalid', re.IGNORECASE), 'invalid_key'),
+    (re.compile(r'unauthorized|authentication.*fail', re.IGNORECASE), 'auth_error'),
+]
+
+def detect_api_issue(text):
+    \"\"\"Check if text contains an API infrastructure issue. Returns (issue_type, matched_text) or None.\"\"\"
+    for pattern, issue_type in _API_ISSUE_PATTERNS:
+        m = pattern.search(text)
+        if m:
+            return issue_type, m.group(0)
+    return None
+
+def check_and_alert_api_issues(task, new_finding=''):
+    \"\"\"Scan task findings for API issues and send a dedicated alert if not already alerted.\"\"\"
+    if task.get('apiIssueAlerted'):
+        return None
+    # Check new finding first, then all findings
+    texts_to_check = []
+    if new_finding:
+        texts_to_check.append(new_finding)
+    texts_to_check.extend(task.get('findings', []))
+    for text in texts_to_check:
+        result = detect_api_issue(text)
+        if result:
+            issue_type, matched = result
+            tid = task.get('id', '?')
+            agent = task.get('agent', '?')
+            issue_labels = {'rate_limit': 'Rate limit hit', 'invalid_key': 'Invalid API key', 'auth_error': 'Authentication error'}
+            issue_label = issue_labels.get(issue_type, issue_type)
+            product_goal = task.get('productGoal', '')
+            alert_msg = (
+                f'\U0001f6a8 *API Issue Detected*\\n'
+                f'*Task:* {tid}\\n'
+                f'*Agent:* {agent}\\n'
+                f'*Issue:* {issue_label}\\n'
+                f'*Error:* \"{matched}\"\\n'
+                f'*Action needed:* Check API quota/key for {agent}'
+            )
+            run_notify(tid, task.get('phase', 'failed'), alert_msg, product_goal,
+                       next_step=f'Manual intervention: check {agent} API access')
+            apply_updates(tid, {'apiIssueAlerted': True, 'apiIssueType': issue_type})
+            task['apiIssueAlerted'] = True
+            return issue_type
+    return None
+
 def read_tasks():
     \"\"\"Read tasks from JSON with flock.\"\"\"
     fd = open(lock_file, 'w')
@@ -635,6 +687,13 @@ for task in tasks:
 
     # --- Handle needs_split: auto-retry or auto-split ---
     if phase == 'needs_split':
+        # Check for API infrastructure issues first — retry/split won't help
+        api_issue = check_and_alert_api_issues(task)
+        if api_issue:
+            print(f'INFO: {tid} has API issue ({api_issue}) — skipping auto-recovery')
+            changes_made += 1
+            continue
+
         auto_retry_count = task.get('autoRetryCount', 0)
         auto_split_attempt_count = task.get('autoSplitAttemptCount', 0)
         split_depth = task.get('splitDepth', 0)
@@ -768,7 +827,48 @@ for task in tasks:
                 run_notify(tid, 'needs_split', f'Auto-split failed', product_goal)
             changes_made += 1
 
-        # else: truly terminal — needs human intervention, do nothing
+        else:
+            # Re-dispatch: fresh start on a new branch, carrying forward learnings
+            should_redispatch = (
+                task.get('redispatchCount', 0) < 1
+                and split_depth == 0
+                and description and product_goal
+            )
+            if should_redispatch:
+                dispatch_script = os.path.join(script_dir, 'dispatch.sh')
+                new_task_id = f'{tid}-v2'
+                new_branch = f'{task.get("branch", tid)}-v2'
+                learnings = '\n'.join(f'- {f}' for f in task.get('findings', [])[-5:])
+                new_description = f'{description}\n\nLearnings from previous attempt:\n{learnings}'
+
+                dispatch_cmd = [
+                    dispatch_script,
+                    '--task-id', new_task_id,
+                    '--branch', new_branch,
+                    '--product-goal', product_goal,
+                    '--description', new_description,
+                    '--agent', task.get('agent', 'claude'),
+                    '--phase', 'planning',
+                    '--require-plan-review', 'false',
+                ]
+                d_result = subprocess.run(dispatch_cmd, capture_output=True, text=True,
+                                          cwd=get_task_repo(task), env=_clean_env)
+                if d_result.returncode == 0:
+                    apply_updates(tid, {
+                        'redispatchCount': 1,
+                        'redispatchedTo': new_task_id,
+                        'findings': task.get('findings', []) + [f'Re-dispatched as {new_task_id}'],
+                    })
+                    apply_updates(new_task_id, {'splitDepth': 0, 'parentTask': tid})
+                    run_notify(tid, 'needs_split',
+                        f'Re-dispatched as fresh task {new_task_id}',
+                        product_goal,
+                        f'New task {new_task_id} starting from planning')
+                else:
+                    print(f'WARNING: Re-dispatch failed for {tid}: {d_result.stderr}')
+                    run_notify(tid, 'needs_split', f'Re-dispatch failed', product_goal)
+                changes_made += 1
+            # else: truly terminal — needs human intervention, do nothing
         continue
 
     # Only stamp and act if the task needs action (not just running)
@@ -815,6 +915,11 @@ for task in tasks:
     # --- Handle failures ---
     if status == 'failed':
         fail_reason = report.get('failReason', 'unknown')
+        # Check fail reason for API issues — alert immediately
+        api_issue = detect_api_issue(fail_reason)
+        if api_issue:
+            task['findings'] = task.get('findings', []) + [f'Failed during {phase}: {fail_reason}']
+            check_and_alert_api_issues(task, fail_reason)
         iteration += 1
         new_findings = task.get('findings', []) + [f'Failed during {phase}: {fail_reason}']
         if iteration >= max_iter:
