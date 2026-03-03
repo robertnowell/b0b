@@ -18,12 +18,18 @@ set -euo pipefail
 source "$(cd "$(dirname "$0")" && pwd)/config.sh"
 
 # Prevent concurrent dispatch runs (causes duplicate task creation)
+# Uses PID-based lockfile (portable — flock binary is Linux-only)
 DISPATCH_LOCK="${STATE_DIR}/.gh-comment-dispatch.lock"
-exec 9>"$DISPATCH_LOCK"
-if ! flock -n 9; then
-  echo "Another gh-comment-dispatch is already running — skipping"
-  exit 0
+if [ -f "$DISPATCH_LOCK" ]; then
+  old_pid=$(cat "$DISPATCH_LOCK" 2>/dev/null)
+  if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
+    echo "Another gh-comment-dispatch is already running (PID $old_pid) — skipping"
+    exit 0
+  fi
+  rm -f "$DISPATCH_LOCK"
 fi
+echo $$ > "$DISPATCH_LOCK"
+trap 'rm -f "$DISPATCH_LOCK"' EXIT
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DISPATCH="${SCRIPT_DIR}/dispatch.sh"
@@ -131,7 +137,7 @@ try:
     tasks = json.load(open(sys.argv[1]))
     for t in tasks:
         phase = t.get('phase', '')
-        if phase in ('merged', 'needs_split', 'split', 'failed'):
+        if phase in ('merged', 'split', 'failed'):
             continue
         src = str(t.get('sourceNumber', ''))
         pr = str(t.get('prNumber', ''))

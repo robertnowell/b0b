@@ -37,10 +37,11 @@ _format_age() {
   local iso_ts="$1"
   [[ -z "$iso_ts" ]] && return
   local ts_epoch now_epoch diff_s
-  ts_epoch=$(date -jf "%Y-%m-%dT%H:%M:%SZ" "$iso_ts" "+%s" 2>/dev/null || date -d "$iso_ts" "+%s" 2>/dev/null) || return
+  ts_epoch=$(TZ=UTC date -jf "%Y-%m-%dT%H:%M:%SZ" "$iso_ts" "+%s" 2>/dev/null || date -d "$iso_ts" "+%s" 2>/dev/null) || return
   now_epoch=$(date "+%s")
   diff_s=$((now_epoch - ts_epoch))
-  if (( diff_s < 60 )); then echo "${diff_s}s"
+  if (( diff_s < 0 )); then echo "just now"
+  elif (( diff_s < 60 )); then echo "${diff_s}s"
   elif (( diff_s < 3600 )); then echo "$(( diff_s / 60 ))m"
   elif (( diff_s < 86400 )); then echo "$(( diff_s / 3600 ))h $(( (diff_s % 3600) / 60 ))m"
   else echo "$(( diff_s / 86400 ))d $(( (diff_s % 86400) / 3600 ))h"
