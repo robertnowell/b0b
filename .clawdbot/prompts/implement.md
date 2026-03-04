@@ -12,6 +12,9 @@ Read CLAUDE.md for repo conventions.
 ## Deliverables
 {DELIVERABLES}
 
+## Original User Request
+{USER_REQUEST}
+
 {IMAGES}
 
 ## Instructions

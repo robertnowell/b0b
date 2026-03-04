@@ -6,6 +6,9 @@
 ## Product Goal
 {PRODUCT_GOAL}
 
+## Original User Request
+{USER_REQUEST}
+
 ## Task ID
 {TASK_ID}
 
