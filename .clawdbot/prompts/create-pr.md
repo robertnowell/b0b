@@ -3,6 +3,9 @@
 ## Task
 {TASK_DESCRIPTION}
 
+## Original User Request
+{USER_REQUEST}
+
 {IMAGES}
 
 ## Instructions

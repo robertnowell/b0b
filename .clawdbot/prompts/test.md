@@ -9,6 +9,9 @@ Read CLAUDE.md for repo conventions.
 ## Product Goal
 {PRODUCT_GOAL}
 
+## Original User Request
+{USER_REQUEST}
+
 {IMAGES}
 
 ## Implementation Diff
@@ -24,14 +27,20 @@ Read CLAUDE.md for repo conventions.
    - Are there tests for the new functionality?
    - If not, write them
 4. If any tests fail, fix them
-5. Output a test report:
-   - TESTS_PASSED: yes/no
-   - BUILD_PASSED: yes/no
-   - LINT_PASSED: yes/no
-   - NEW_TESTS_WRITTEN: list of test files
-   - MANUAL_TESTING: list of things a human should verify (UI flows, edge cases, integrations)
-   - ISSUES_FOUND: any bugs or concerns discovered during testing
+5. Output a test report covering results, new tests written, manual testing notes, and issues found.
 
-IMPORTANT: Your final output MUST end with a structured verdict line in exactly this format:
-`TEST_VERDICT:PASS` or `TEST_VERDICT:FAIL`
-This line must appear on its own line at the very end of your output, after all other content.
+IMPORTANT: Your final output MUST end with the following structured block.
+Every field is required — use "yes" or "no" for pass fields, 0 for counts, and "none" for empty lists.
+```
+TEST_FINDINGS_START
+TESTS_PASSED: yes/no
+BUILD_PASSED: yes/no
+LINT_PASSED: yes/no
+CRITICAL: <number of critical issues>
+MINOR: <number of minor issues>
+MISSING: <comma-separated missing items, or "none">
+SUMMARY: <1-3 sentence assessment of test results>
+TEST_FINDINGS_END
+TEST_VERDICT:PASS or TEST_VERDICT:FAIL
+```
+The TEST_FINDINGS block and TEST_VERDICT line must each appear on their own lines at the very end of your output, after all other content.

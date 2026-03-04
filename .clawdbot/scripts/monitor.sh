@@ -95,6 +95,140 @@ def run_notify(task_id, phase, message, product_goal='', next_step='', started_a
         cmd += ['--plan-file', plan_file]
     subprocess.run(cmd, input=message, capture_output=True, text=True, env=_clean_env)
 
+def log_transition(task, from_phase, to_phase, verdict='', structured_findings=None,
+                   iteration=None, feedback_source='', feedback_size=0,
+                   prompt_template='', prompt_file='', prompt_size=0, plan_size=0,
+                   extra=None):
+    \"\"\"Write a JSONL transition entry and return a formatted Slack message.\"\"\"
+    import time as _time
+    tid = task.get('id', '')
+    started_at = task.get('startedAt', '')
+    elapsed = ''
+    if started_at:
+        try:
+            from datetime import datetime, timezone
+            start_dt = datetime.fromisoformat(started_at.replace('Z', '+00:00'))
+            elapsed_s = int((_time.time() - start_dt.timestamp()))
+            elapsed = f'{elapsed_s // 60}m {elapsed_s % 60}s'
+        except (ValueError, TypeError):
+            pass
+
+    sf = structured_findings or {}
+    iter_num = iteration if iteration is not None else task.get('iteration', 0)
+    max_iter = task.get('maxIterations', max_iterations)
+
+    entry = {
+        'task_id': tid,
+        'from_phase': from_phase,
+        'to_phase': to_phase,
+        'timestamp': _time.strftime('%Y-%m-%dT%H:%M:%SZ', _time.gmtime()),
+        'iteration': iter_num,
+        'max_iterations': max_iter,
+        'verdict': verdict,
+        'structured_findings': sf,
+        'input': {
+            'prompt_template': prompt_template,
+            'prompt_file': prompt_file,
+            'prompt_size_bytes': prompt_size,
+            'plan_size_bytes': plan_size,
+            'image_count': len(task.get('imageFiles', [])),
+            'image_files': task.get('imageFiles', []),
+            'user_request_size_bytes': len(task.get('userRequest', '')),
+        },
+        'context_forwarded': {
+            'feedback_source': feedback_source,
+            'feedback_size_bytes': feedback_size,
+            'findings_carried': len(task.get('findings', [])),
+        },
+    }
+    if extra:
+        entry.update(extra)
+
+    transitions_file = os.path.join(log_dir, f'transitions-{tid}.jsonl')
+    try:
+        with open(transitions_file, 'a') as tf:
+            tf.write(json.dumps(entry) + '\\n')
+    except OSError as e:
+        print(f'WARNING: Could not write transition log for {tid}: {e}')
+
+    return format_transition_slack(entry, elapsed)
+
+def format_transition_slack(entry, elapsed=''):
+    \"\"\"Format a transition log entry into an enriched Slack notification.\"\"\"
+    tid = entry.get('task_id', '?')
+    from_p = entry.get('from_phase', '?')
+    to_p = entry.get('to_phase', '?')
+    iter_num = entry.get('iteration', 0)
+    max_iter = entry.get('max_iterations', 0)
+    verdict = entry.get('verdict', '')
+    sf = entry.get('structured_findings', {})
+    inp = entry.get('input', {})
+    ctx = entry.get('context_forwarded', {})
+
+    lines = [f'Transition: {from_p} -> {to_p} | {tid} | iter {iter_num}/{max_iter}']
+    if elapsed:
+        lines.append(f'Elapsed: {elapsed}')
+
+    # Input summary
+    input_parts = []
+    if inp.get('plan_size_bytes'):
+        input_parts.append(f'plan ({inp[\"plan_size_bytes\"] / 1024:.1f}kb)')
+    if inp.get('prompt_size_bytes'):
+        input_parts.append(f'prompt ({inp[\"prompt_size_bytes\"] / 1024:.1f}kb)')
+    if ctx.get('findings_carried'):
+        input_parts.append(f'{ctx[\"findings_carried\"]} prior findings')
+    ur_size = inp.get('user_request_size_bytes', 0)
+    if ur_size:
+        input_parts.append(f'user_request ({ur_size / 1024:.1f}kb)')
+    elif inp.get('prompt_template', '') not in ('plan.md', 'review-plan.md', ''):
+        input_parts.append('user_request (MISSING)')
+    img_count = inp.get('image_count', 0)
+    if img_count:
+        input_parts.append(f'{img_count} images')
+    if input_parts:
+        lines.append('Input: ' + ' + '.join(input_parts))
+
+    # Output verdict
+    if verdict:
+        v_icon = 'PASS' if verdict.lower() == 'pass' else 'FAIL'
+        lines.append(f'Output: {v_icon}')
+
+    # Structured findings detail
+    if sf:
+        cc = sf.get('critical_count')
+        mc = sf.get('minor_count')
+        if cc is not None or mc is not None:
+            lines.append(f'  {cc or 0} critical, {mc or 0} minor issues')
+        missing = sf.get('missing', [])
+        if missing:
+            lines.append(f'  Missing: ' + ', '.join(missing[:5]))
+        summary = sf.get('summary', '')
+        if summary:
+            lines.append(f'  {summary[:300]}')
+        tp = sf.get('tests_passed')
+        bp = sf.get('build_passed')
+        if tp is not None or bp is not None:
+            s_parts = []
+            if tp is not None:
+                s_parts.append(f'tests={\"pass\" if tp else \"fail\"}')
+            if bp is not None:
+                s_parts.append(f'build={\"pass\" if bp else \"fail\"}')
+            lines.append(f'  Status: ' + ', '.join(s_parts))
+
+    # Context forwarded
+    if ctx.get('feedback_source') or ctx.get('feedback_size_bytes'):
+        fwd = f'Context -> {to_p}:'
+        if ctx.get('feedback_size_bytes'):
+            fwd += f' feedback ({ctx[\"feedback_size_bytes\"] / 1024:.1f}kb)'
+        if ctx.get('feedback_source'):
+            fwd += f' via {ctx[\"feedback_source\"]}'
+        lines.append(fwd)
+
+    if inp.get('prompt_template'):
+        lines.append(f'Template: {inp[\"prompt_template\"]}')
+
+    return '\\n'.join(lines)
+
 # --- API issue detection ---
 _API_ISSUE_PATTERNS = [
     (re.compile(r'hit your.*(limit|quota)', re.IGNORECASE), 'rate_limit'),
@@ -207,61 +341,101 @@ def extract_structured_verdict(content, verdict_key):
             return match.group(1).lower()
     return None
 
+def extract_findings_block(content, block_key):
+    \"\"\"Extract structured findings from a delimited block (e.g. AUDIT_FINDINGS_START/END).
+    Returns a dict with parsed fields, or empty dict if block not found.\"\"\"
+    start_tag = f'{block_key}_START'
+    end_tag = f'{block_key}_END'
+    start_idx = content.rfind(start_tag)
+    if start_idx == -1:
+        return {}
+    end_idx = content.find(end_tag, start_idx)
+    if end_idx == -1:
+        return {}
+    block = content[start_idx + len(start_tag):end_idx].strip()
+    result = {}
+    for line in block.split('\n'):
+        line = line.strip()
+        if ':' in line:
+            key, _, value = line.partition(':')
+            key = key.strip().lower()
+            value = value.strip()
+            if key in ('critical', 'minor'):
+                try:
+                    result[key + '_count'] = int(value)
+                except ValueError:
+                    result[key + '_count'] = 0
+            elif key == 'missing':
+                if value.lower() == 'none':
+                    result['missing'] = []
+                else:
+                    result['missing'] = [m.strip() for m in value.split(',') if m.strip()]
+            elif key == 'summary':
+                result['summary'] = value
+            elif key in ('tests_passed', 'build_passed', 'lint_passed'):
+                result[key] = value.lower().startswith('yes')
+    return result
+
 def get_audit_result(task):
-    \"\"\"Parse the agent's log for structured AUDIT_VERDICT line.\"\"\"
+    \"\"\"Parse the agent's log for structured AUDIT_VERDICT and AUDIT_FINDINGS block.
+    Returns (verdict, summary, findings_dict).\"\"\"
     log_file = task.get('logFile', '')
     if not log_file or not os.path.exists(log_file):
-        return 'unknown', 'No log file found'
+        return 'unknown', 'No log file found', {}
 
     with open(log_file) as f:
         content = f.read()
 
-    # Look for structured verdict line: AUDIT_VERDICT:PASS or AUDIT_VERDICT:FAIL
     verdict = extract_structured_verdict(content, 'AUDIT_VERDICT')
+    findings = extract_findings_block(content, 'AUDIT_FINDINGS')
 
-    # Extract findings summary from the tail
-    tail = content[-2000:] if len(content) > 2000 else content
-    findings_summary = ''
-    for line in tail.split('\n'):
-        stripped = line.strip()
-        if stripped and not stripped.startswith('AGENT_') and 'AUDIT_VERDICT:' not in stripped.upper():
-            findings_summary = stripped
+    # Use structured summary if available, else fall back to last non-agent line
+    if findings.get('summary'):
+        findings_summary = findings['summary']
+    else:
+        tail = content[-2000:] if len(content) > 2000 else content
+        findings_summary = ''
+        for line in tail.split('\n'):
+            stripped = line.strip()
+            if stripped and not stripped.startswith('AGENT_') and 'AUDIT_VERDICT:' not in stripped.upper():
+                findings_summary = stripped
 
     if verdict == 'pass':
-        return 'pass', findings_summary
+        return 'pass', findings_summary, findings
     elif verdict == 'fail':
-        return 'fail', findings_summary
+        return 'fail', findings_summary, findings
     else:
-        # No structured verdict found - treat as fail for safety
-        return 'fail', findings_summary or 'No structured AUDIT_VERDICT found in output'
+        return 'fail', findings_summary or 'No structured AUDIT_VERDICT found in output', findings
 
 def get_test_result(task):
-    \"\"\"Parse the agent's log for structured TEST_VERDICT line.\"\"\"
+    \"\"\"Parse the agent's log for structured TEST_VERDICT and TEST_FINDINGS block.
+    Returns (verdict, summary, findings_dict).\"\"\"
     log_file = task.get('logFile', '')
     if not log_file or not os.path.exists(log_file):
-        return 'unknown', 'No log file found'
+        return 'unknown', 'No log file found', {}
 
     with open(log_file) as f:
         content = f.read()
 
-    # Look for structured verdict line: TEST_VERDICT:PASS or TEST_VERDICT:FAIL
     verdict = extract_structured_verdict(content, 'TEST_VERDICT')
+    findings = extract_findings_block(content, 'TEST_FINDINGS')
 
-    # Extract summary from the tail
-    tail = content[-2000:] if len(content) > 2000 else content
-    findings_summary = ''
-    for line in tail.split('\n'):
-        stripped = line.strip()
-        if stripped and not stripped.startswith('AGENT_') and 'TEST_VERDICT:' not in stripped.upper():
-            findings_summary = stripped
+    if findings.get('summary'):
+        findings_summary = findings['summary']
+    else:
+        tail = content[-2000:] if len(content) > 2000 else content
+        findings_summary = ''
+        for line in tail.split('\n'):
+            stripped = line.strip()
+            if stripped and not stripped.startswith('AGENT_') and 'TEST_VERDICT:' not in stripped.upper():
+                findings_summary = stripped
 
     if verdict == 'pass':
-        return 'pass', findings_summary
+        return 'pass', findings_summary, findings
     elif verdict == 'fail':
-        return 'fail', findings_summary
+        return 'fail', findings_summary, findings
     else:
-        # No structured verdict found - treat as fail for safety
-        return 'fail', findings_summary or 'No structured TEST_VERDICT found in output'
+        return 'fail', findings_summary or 'No structured TEST_VERDICT found in output', findings
 
 def choose_audit_agent(impl_agent):
     \"\"\"The agent that implements never audits its own work.\"\"\"
@@ -370,17 +544,47 @@ def spawn_agent(task, phase, prompt_template, agent_override=None):
         else:
             print(f'WARNING: git diff empty/failed for {tid}, falling back to description')
 
-    # Build feedback text: for fixing phase, use full audit log (last 200 lines)
+    # Build feedback text: for fixing phase, prepend structured assessment then raw log tail
     findings = task.get('findings', [])
     feedback_text = '\n'.join(f'- {f}' for f in findings) if findings else 'No previous findings.'
     if phase == 'fixing':
+        structured = task.get('lastStructuredFindings', {})
+        structured_header = ''
+        if structured:
+            parts = []
+            cc = structured.get('critical_count')
+            mc = structured.get('minor_count')
+            if cc is not None or mc is not None:
+                parts.append(f'Issues: {cc or 0} critical, {mc or 0} minor')
+            missing = structured.get('missing', [])
+            if missing:
+                parts.append('Missing:\\n' + '\\n'.join(f'- {m}' for m in missing))
+            summary = structured.get('summary', '')
+            if summary:
+                parts.append(f'Assessment: {summary}')
+            tp = structured.get('tests_passed')
+            bp = structured.get('build_passed')
+            lp = structured.get('lint_passed')
+            if tp is not None or bp is not None or lp is not None:
+                status_parts = []
+                if tp is not None:
+                    status_parts.append(f'tests={\"pass\" if tp else \"fail\"}')
+                if bp is not None:
+                    status_parts.append(f'build={\"pass\" if bp else \"fail\"}')
+                if lp is not None:
+                    status_parts.append(f'lint={\"pass\" if lp else \"fail\"}')
+                parts.append('Status: ' + ', '.join(status_parts))
+            if parts:
+                structured_header = '## Structured Assessment Summary\\n' + '\\n'.join(parts) + '\\n\\n'
+
         log_file = task.get('logFile', '')
         if log_file and os.path.exists(log_file):
             with open(log_file) as lf:
                 log_lines = lf.readlines()
-            # Use last 200 lines of audit log for full context
             tail_lines = log_lines[-200:] if len(log_lines) > 200 else log_lines
-            feedback_text = ''.join(tail_lines)
+            feedback_text = structured_header + '## Raw Log (last 200 lines)\\n' + ''.join(tail_lines)
+        elif structured_header:
+            feedback_text = structured_header
 
     # Fill template in-process (avoids ARG_MAX/E2BIG when plan/diff/feedback are large)
     import re as _re
@@ -430,6 +634,30 @@ def spawn_agent(task, phase, prompt_template, agent_override=None):
     prompt_file = os.path.join(log_dir, f'prompt-{tid}-{phase}-{int(_time.time())}.md')
     with open(prompt_file, 'w') as f:
         f.write(prompt_content)
+
+    # Log spawn input context to transition JSONL
+    _spawn_entry = {
+        'event': 'spawn_agent',
+        'task_id': tid,
+        'phase': phase,
+        'timestamp': _time.strftime('%Y-%m-%dT%H:%M:%SZ', _time.gmtime()),
+        'agent': agent,
+        'prompt_template': prompt_template,
+        'prompt_file': prompt_file,
+        'prompt_size_bytes': len(prompt_content),
+        'plan_size_bytes': len(plan_text),
+        'feedback_size_bytes': len(feedback_text),
+        'findings_count': len(findings),
+        'image_count': len(task.get('imageFiles', [])),
+        'user_request_size_bytes': len(task.get('userRequest', '')),
+        'iteration': task.get('iteration', 0),
+    }
+    _transitions_file = os.path.join(log_dir, f'transitions-{tid}.jsonl')
+    try:
+        with open(_transitions_file, 'a') as _tf:
+            _tf.write(json.dumps(_spawn_entry) + '\\n')
+    except OSError:
+        pass
 
     cmd = [
         spawn, tid, branch, agent, prompt_file,
@@ -608,10 +836,9 @@ for task in tasks:
                     ci_pass = checks and all((c.get('conclusion') or c.get('state', '')).upper() == 'SUCCESS' for c in checks)
         if pr_number and ci_pass:
             apply_updates(tid, {'phase': 'pr_ready', 'status': 'pr_ready', 'prNumber': pr_number, 'conflictFixCount': 0})
-            run_notify(tid, 'pr_ready',
-                f'PR #{pr_number} passed CI — ready for human review',
-                product_goal,
-                'Merge when ready')
+            _t_msg = log_transition(task, 'reviewing', 'pr_ready', verdict='pass',
+                extra={'pr_number': pr_number})
+            run_notify(tid, 'pr_ready', _t_msg, product_goal, 'Merge when ready')
             changes_made += 1
         elif pr_number and not ci_pass:
             # Check for merge conflicts while waiting for CI
@@ -636,10 +863,9 @@ for task in tasks:
                             capture_output=True, text=True, cwd=task_repo, env=_clean_env)
                         if fix_result.returncode == 0:
                             apply_updates(tid, {'conflictFixCount': conflict_fix_count + 1})
-                            run_notify(tid, 'fixing',
-                                f'PR #{pr_number} has merge conflicts. Auto-dispatching fix agent.',
-                                product_goal,
-                                'Resolving merge conflicts')
+                            _t_msg = log_transition(task, 'reviewing', 'fixing',
+                                extra={'reason': 'merge_conflicts', 'pr_number': pr_number})
+                            run_notify(tid, 'fixing', _t_msg, product_goal, 'Resolving merge conflicts')
                         else:
                             print(f'WARNING: dispatch-fix.sh failed for {tid} merge conflicts: {fix_result.stderr}')
                     changes_made += 1
@@ -673,10 +899,9 @@ for task in tasks:
                 pr_state = pr_data.get('state', '')
                 if str(pr_state).upper() == 'MERGED':
                     apply_updates(tid, {'phase': 'merged', 'status': 'merged'})
-                    run_notify(tid, 'merged',
-                        f'PR #{pr_number} has been merged',
-                        product_goal,
-                        'Done')
+                    _t_msg = log_transition(task, 'pr_ready', 'merged', verdict='pass',
+                        extra={'pr_number': pr_number})
+                    run_notify(tid, 'merged', _t_msg, product_goal, 'Done')
                     changes_made += 1
                 elif pr_data.get('mergeable', '') == 'CONFLICTING':
                     # PR has merge conflicts — dispatch fix agent (with retry guard)
@@ -695,10 +920,9 @@ for task in tasks:
                             capture_output=True, text=True, cwd=task_repo, env=_clean_env)
                         if fix_result.returncode == 0:
                             apply_updates(tid, {'conflictFixCount': conflict_fix_count + 1})
-                            run_notify(tid, 'fixing',
-                                f'PR #{pr_number} has merge conflicts. Auto-dispatching fix agent.',
-                                product_goal,
-                                'Resolving merge conflicts')
+                            _t_msg = log_transition(task, 'pr_ready', 'fixing',
+                                extra={'reason': 'merge_conflicts', 'pr_number': pr_number})
+                            run_notify(tid, 'fixing', _t_msg, product_goal, 'Resolving merge conflicts')
                         else:
                             print(f'WARNING: dispatch-fix.sh failed for {tid} merge conflicts: {fix_result.stderr}')
                     changes_made += 1
@@ -732,9 +956,9 @@ for task in tasks:
             prev_findings = task.get('findings', [])
             preserved_findings = prev_findings + [f'Auto-retry #{new_retry_count} triggered']
             prev_count = len(prev_findings)
-            run_notify(tid, 'planning',
-                f'Auto-retrying from needs_split (retry {new_retry_count}/{max_auto_retries}). Previous findings preserved.',
-                product_goal,
+            _t_msg = log_transition(task, 'needs_split', 'planning',
+                extra={'reason': f'auto_retry_{new_retry_count}/{max_auto_retries}', 'prev_findings_count': prev_count})
+            run_notify(tid, 'planning', _t_msg, product_goal,
                 f'Re-planning with context from {prev_count} previous findings')
             task['iteration'] = 0
             task['autoRetryCount'] = new_retry_count
@@ -799,10 +1023,9 @@ for task in tasks:
                             'autoSplitAttemptCount': auto_split_attempt_count,
                             'subtasks': subtask_ids,
                         })
-                        run_notify(tid, 'split',
-                            f'Auto-split into {len(subtask_ids)} subtasks: ' + ', '.join(subtask_ids),
-                            product_goal,
-                            'Subtasks are now running')
+                        _t_msg = log_transition(task, 'needs_split', 'split',
+                            extra={'subtask_ids': subtask_ids, 'subtask_count': len(subtask_ids)})
+                        run_notify(tid, 'split', _t_msg, product_goal, 'Subtasks are now running')
                     else:
                         print(f'WARNING: No subtasks dispatched for {tid}')
                         new_split_attempt_count = auto_split_attempt_count + 1
@@ -872,9 +1095,9 @@ for task in tasks:
                         'autoSplitAttemptCount': 0,
                         'autoRetryCount': 0,
                     })
-                    run_notify(tid, 'planning',
-                        f'Auto-recovery exhausted \u2014 resetting task for fresh attempt',
-                        product_goal,
+                    _t_msg = log_transition(task, 'needs_split', 'planning',
+                        extra={'reason': 'reset_fresh_attempt'})
+                    run_notify(tid, 'planning', _t_msg, product_goal,
                         'Re-planning from scratch with learnings')
                 else:
                     print(f'ERROR: Reset spawn failed for {tid}')
@@ -901,15 +1124,13 @@ for task in tasks:
                 'iteration': iteration,
                 'findings': new_findings + [f'Max iterations reached'],
             })
-            run_notify(tid, 'needs_split',
-                f'Task exceeded {max_iter} iterations without converging. Reverted. Needs manual split.',
-                product_goal,
-                'Needs manual split into subtasks')
+            _t_msg = log_transition(task, phase, 'needs_split', iteration=iteration,
+                extra={'reason': 'timeout_max_iter'})
+            run_notify(tid, 'needs_split', _t_msg, product_goal, 'Needs manual split into subtasks')
         else:
-            run_notify(tid, phase,
-                f'Agent timed out during {phase}. Respawning (iteration {iteration}/{max_iter})',
-                product_goal,
-                f'Respawning in {phase} phase')
+            _t_msg = log_transition(task, phase, phase, iteration=iteration,
+                extra={'reason': 'timeout_respawn'})
+            run_notify(tid, phase, _t_msg, product_goal, f'Respawning in {phase} phase')
             task['iteration'] = iteration
             task['findings'] = new_findings
             ok = spawn_agent(task, phase, phase_to_template(phase), task.get('agent'))
@@ -942,15 +1163,13 @@ for task in tasks:
                 'iteration': iteration,
                 'findings': new_findings + [f'Max iterations reached'],
             })
-            run_notify(tid, 'needs_split',
-                f'Task exceeded {max_iter} iterations without converging. Reverted. Needs manual split.',
-                product_goal,
-                'Needs manual split into subtasks')
+            _t_msg = log_transition(task, phase, 'needs_split', iteration=iteration,
+                extra={'reason': 'failure_max_iter', 'fail_reason': fail_reason})
+            run_notify(tid, 'needs_split', _t_msg, product_goal, 'Needs manual split into subtasks')
         else:
-            run_notify(tid, phase,
-                f'Agent failed during {phase}: {fail_reason}. Respawning (iteration {iteration}/{max_iter})',
-                product_goal,
-                f'Respawning in {phase} phase')
+            _t_msg = log_transition(task, phase, phase, iteration=iteration,
+                extra={'reason': 'failure_respawn', 'fail_reason': fail_reason})
+            run_notify(tid, phase, _t_msg, product_goal, f'Respawning in {phase} phase')
             task['iteration'] = iteration
             task['findings'] = new_findings
             ok = spawn_agent(task, phase, phase_to_template(phase), task.get('agent'))
@@ -992,7 +1211,7 @@ for task in tasks:
                 if result.returncode == 0 and result.stdout.strip():
                     agent_actually_succeeded = True
         elif phase == 'auditing':
-            audit_result, _ = get_audit_result(task)
+            audit_result, _, _ = get_audit_result(task)
             if audit_result in ('pass', 'fail'):
                 # Audit produced a result (pass or fail) — agent completed
                 agent_actually_succeeded = True
@@ -1037,10 +1256,9 @@ for task in tasks:
                     'status': 'failed',
                     'failReason': f'superseded by {superseded_by}',
                 })
-                run_notify(tid, 'failed',
-                    f'Agent exited unexpectedly and superseded by \`{superseded_by}\`. Marked as failed.',
-                    product_goal,
-                    'No action needed — newer task exists')
+                _t_msg = log_transition(task, phase, 'failed',
+                    extra={'reason': 'superseded', 'superseded_by': superseded_by})
+                run_notify(tid, 'failed', _t_msg, product_goal, 'No action needed — newer task exists')
                 changes_made += 1
                 continue
 
@@ -1057,10 +1275,9 @@ for task in tasks:
                     'findings': new_findings,
                     'failReason': 'max_respawns_exceeded',
                 })
-                run_notify(tid, 'failed',
-                    f'Agent exited unexpectedly {respawn_count + 1} times during {phase}. Max respawns exceeded.',
-                    product_goal,
-                    'Needs manual investigation')
+                _t_msg = log_transition(task, phase, 'failed',
+                    extra={'reason': 'max_respawns', 'respawn_count': respawn_count + 1})
+                run_notify(tid, 'failed', _t_msg, product_goal, 'Needs manual investigation')
                 changes_made += 1
                 continue
 
@@ -1077,20 +1294,18 @@ for task in tasks:
                         f'Agent exited unexpectedly during {phase} and worktree is missing'
                     ],
                 })
-                run_notify(tid, 'failed',
-                    f'Agent exited unexpectedly and worktree is missing. Cannot respawn.',
-                    product_goal,
-                    'Needs manual re-dispatch')
+                _t_msg = log_transition(task, phase, 'failed',
+                    extra={'reason': 'worktree_missing'})
+                run_notify(tid, 'failed', _t_msg, product_goal, 'Needs manual re-dispatch')
                 changes_made += 1
                 continue
 
             # Respawn the agent
             cleanup_dead_agent(task)
             respawn_count += 1
-            run_notify(tid, phase,
-                f'Agent exited unexpectedly during {phase}. Respawning (attempt {respawn_count}/{max_respawns})',
-                product_goal,
-                f'Respawning in {phase} phase')
+            _t_msg = log_transition(task, phase, phase,
+                extra={'reason': 'dead_agent_respawn', 'respawn_attempt': respawn_count, 'max_respawns': max_respawns})
+            run_notify(tid, phase, _t_msg, product_goal, f'Respawning in {phase} phase')
 
             # For auditing phase, use the cross-agent logic
             agent_override = task.get('agent')
@@ -1132,6 +1347,8 @@ for task in tasks:
                     )
                     if len(plan_content) > 3800:
                         plan_notify_text += f'\n\n_(truncated — full plan in {plan_file})_'
+                    log_transition(task, 'planning', 'plan_review', verdict='ready',
+                        plan_size=len(plan_content))
                     run_notify(tid, 'plan_review',
                         plan_notify_text,
                         product_goal,
@@ -1140,11 +1357,10 @@ for task in tasks:
                 else:
                     # Auto-advance — no human gate
                     task['planContent'] = plan_content
-                    run_notify(tid, 'implementing',
-                        f'Plan auto-approved (requiresPlanReview=false). Starting implementation.',
-                        product_goal,
-                        'Starting implementation',
-                        plan_file=plan_file)
+                    _t_msg = log_transition(task, 'planning', 'implementing', verdict='ready',
+                        plan_size=len(plan_content), prompt_template='implement.md')
+                    run_notify(tid, 'implementing', _t_msg, product_goal,
+                        'Starting implementation', plan_file=plan_file)
                     ok = spawn_agent(task, 'implementing', 'implement.md', task.get('agent'))
                     if ok:
                         apply_updates(tid, {
@@ -1168,14 +1384,13 @@ for task in tasks:
                         'iteration': iteration,
                         'findings': new_findings + [f'Max iterations reached during planning'],
                     })
-                    run_notify(tid, 'needs_split',
-                        f'Task exceeded {max_iter} iterations without producing a ready plan. Needs manual split.',
-                        product_goal,
-                        'Needs manual split into subtasks')
+                    _t_msg = log_transition(task, 'planning', 'needs_split', iteration=iteration,
+                        extra={'reason': 'plan_max_iter'})
+                    run_notify(tid, 'needs_split', _t_msg, product_goal, 'Needs manual split into subtasks')
                 else:
-                    run_notify(tid, 'planning',
-                        f'Plan not ready. Respawning planning agent (iteration {iteration}/{max_iter})',
-                        product_goal,
+                    _t_msg = log_transition(task, 'planning', 'planning', verdict='not_ready',
+                        iteration=iteration, prompt_template='plan.md')
+                    run_notify(tid, 'planning', _t_msg, product_goal,
                         f'Re-planning (iteration {iteration}/{max_iter})')
                     task['iteration'] = iteration
                     task['findings'] = new_findings
@@ -1193,10 +1408,9 @@ for task in tasks:
         elif phase == 'implementing':
             # Advance to auditing
             audit_agent = choose_audit_agent(task.get('agent', 'claude'))
-            run_notify(tid, 'auditing',
-                f'Implementation complete. Spawning {audit_agent} audit agent.',
-                product_goal,
-                'Running code audit')
+            _t_msg = log_transition(task, 'implementing', 'auditing',
+                prompt_template='audit.md', extra={'audit_agent': audit_agent})
+            run_notify(tid, 'auditing', _t_msg, product_goal, 'Running code audit')
             ok = spawn_agent(task, 'auditing', 'audit.md', audit_agent)
             if ok:
                 apply_updates(tid, {'phase': 'auditing', 'status': 'running'})
@@ -1207,15 +1421,22 @@ for task in tasks:
 
         elif phase == 'auditing':
             # Check audit result
-            audit_result, audit_summary = get_audit_result(task)
-            new_findings = task.get('findings', []) + [f'Audit #{iteration + 1}: {audit_summary}']
+            audit_result, audit_summary, audit_findings = get_audit_result(task)
+            task['lastStructuredFindings'] = audit_findings
+            _af_entry = f'Audit #{iteration + 1}: {audit_result.upper()}'
+            if audit_findings.get('critical_count') is not None or audit_findings.get('minor_count') is not None:
+                _af_entry += f' ({audit_findings.get(\"critical_count\", 0)}C/{audit_findings.get(\"minor_count\", 0)}m)'
+            if audit_findings.get('summary'):
+                _af_entry += f' -- {audit_findings[\"summary\"][:200]}'
+            elif audit_summary:
+                _af_entry += f' -- {audit_summary[:200]}'
+            new_findings = task.get('findings', []) + [_af_entry]
 
             if audit_result == 'pass':
                 # Advance to testing
-                run_notify(tid, 'testing',
-                    f'Audit passed. Running tests.',
-                    product_goal,
-                    'Running tests and validation')
+                _t_msg = log_transition(task, 'auditing', 'testing', verdict='pass',
+                    structured_findings=audit_findings, prompt_template='test.md')
+                run_notify(tid, 'testing', _t_msg, product_goal, 'Running tests and validation')
                 ok = spawn_agent(task, 'testing', 'test.md', task.get('agent'))
                 if ok:
                     apply_updates(tid, {
@@ -1237,14 +1458,15 @@ for task in tasks:
                         'iteration': iteration,
                         'findings': new_findings + [f'Max iterations reached with unresolved audit issues'],
                     })
-                    run_notify(tid, 'needs_split',
-                        f'Task exceeded {max_iter} iterations without converging. Reverted. Needs manual split.',
-                        product_goal,
-                        'Needs manual split into subtasks')
+                    _t_msg = log_transition(task, 'auditing', 'needs_split', verdict='fail',
+                        structured_findings=audit_findings, iteration=iteration,
+                        extra={'reason': 'audit_max_iter'})
+                    run_notify(tid, 'needs_split', _t_msg, product_goal, 'Needs manual split into subtasks')
                 else:
-                    run_notify(tid, 'fixing',
-                        f'Audit found issues: {audit_summary}. Sending back for fixes (iteration {iteration}/{max_iter})',
-                        product_goal,
+                    _t_msg = log_transition(task, 'auditing', 'fixing', verdict='fail',
+                        structured_findings=audit_findings, iteration=iteration,
+                        prompt_template='fix-feedback.md')
+                    run_notify(tid, 'fixing', _t_msg, product_goal,
                         f'Fixing audit feedback (iteration {iteration}/{max_iter})')
                     task['iteration'] = iteration
                     task['findings'] = new_findings
@@ -1256,6 +1478,7 @@ for task in tasks:
                             'iteration': iteration,
                             'findings': new_findings,
                             'fixTarget': 'auditing',
+                            'lastStructuredFindings': audit_findings,
                         })
                     else:
                         print(f'ERROR: spawn failed for {tid} during auditing->fixing')
@@ -1264,15 +1487,29 @@ for task in tasks:
 
         elif phase == 'testing':
             # Check test result
-            test_result, test_summary = get_test_result(task)
-            new_findings = task.get('findings', []) + [f'Test #{iteration + 1}: {test_summary}']
+            test_result, test_summary, test_findings = get_test_result(task)
+            task['lastStructuredFindings'] = test_findings
+            _tf_entry = f'Test #{iteration + 1}: {test_result.upper()}'
+            if test_findings.get('critical_count') is not None or test_findings.get('minor_count') is not None:
+                _tf_entry += f' ({test_findings.get(\"critical_count\", 0)}C/{test_findings.get(\"minor_count\", 0)}m)'
+            _tf_status = []
+            if test_findings.get('tests_passed') is not None:
+                _tf_status.append(f'tests={\"pass\" if test_findings[\"tests_passed\"] else \"fail\"}')
+            if test_findings.get('build_passed') is not None:
+                _tf_status.append(f'build={\"pass\" if test_findings[\"build_passed\"] else \"fail\"}')
+            if _tf_status:
+                _tf_entry += f' [{\"  \".join(_tf_status)}]'
+            if test_findings.get('summary'):
+                _tf_entry += f' -- {test_findings[\"summary\"][:200]}'
+            elif test_summary:
+                _tf_entry += f' -- {test_summary[:200]}'
+            new_findings = task.get('findings', []) + [_tf_entry]
 
             if test_result == 'pass':
                 # Advance to PR creation
-                run_notify(tid, 'pr_creating',
-                    f'Tests passed. Creating PR.',
-                    product_goal,
-                    'Creating pull request')
+                _t_msg = log_transition(task, 'testing', 'pr_creating', verdict='pass',
+                    structured_findings=test_findings, prompt_template='create-pr.md')
+                run_notify(tid, 'pr_creating', _t_msg, product_goal, 'Creating pull request')
                 ok = spawn_agent(task, 'pr_creating', 'create-pr.md', task.get('agent'))
                 if ok:
                     apply_updates(tid, {
@@ -1294,14 +1531,15 @@ for task in tasks:
                         'iteration': iteration,
                         'findings': new_findings + [f'Max iterations reached with unresolved test failures'],
                     })
-                    run_notify(tid, 'needs_split',
-                        f'Task exceeded {max_iter} iterations without converging. Reverted. Needs manual split.',
-                        product_goal,
-                        'Needs manual split into subtasks')
+                    _t_msg = log_transition(task, 'testing', 'needs_split', verdict='fail',
+                        structured_findings=test_findings, iteration=iteration,
+                        extra={'reason': 'test_max_iter'})
+                    run_notify(tid, 'needs_split', _t_msg, product_goal, 'Needs manual split into subtasks')
                 else:
-                    run_notify(tid, 'fixing',
-                        f'Tests failed: {test_summary}. Sending back for fixes (iteration {iteration}/{max_iter})',
-                        product_goal,
+                    _t_msg = log_transition(task, 'testing', 'fixing', verdict='fail',
+                        structured_findings=test_findings, iteration=iteration,
+                        prompt_template='fix-feedback.md')
+                    run_notify(tid, 'fixing', _t_msg, product_goal,
                         f'Fixing test failures (iteration {iteration}/{max_iter})')
                     task['iteration'] = iteration
                     task['findings'] = new_findings
@@ -1313,6 +1551,7 @@ for task in tasks:
                             'iteration': iteration,
                             'findings': new_findings,
                             'fixTarget': 'testing',
+                            'lastStructuredFindings': test_findings,
                         })
                     else:
                         print(f'ERROR: spawn failed for {tid} during testing->fixing')
@@ -1325,10 +1564,9 @@ for task in tasks:
             if fix_target == 'reviewing':
                 # Post-PR feedback fix: go back to reviewing to re-check CI
                 apply_updates(tid, {'phase': 'reviewing', 'status': 'reviewing'})
-                run_notify(tid, 'reviewing',
-                    f'Fixes applied for PR feedback. Re-checking CI.',
-                    product_goal,
-                    'Awaiting CI re-check')
+                _t_msg = log_transition(task, 'fixing', 'reviewing',
+                    extra={'fix_target': 'reviewing'})
+                run_notify(tid, 'reviewing', _t_msg, product_goal, 'Awaiting CI re-check')
                 # Post feedback-addressed comment on the PR
                 pr_num = task.get('prNumber')
                 feedback = task.get('lastFeedback', '')
@@ -1339,10 +1577,10 @@ for task in tasks:
                         ['gh', 'issue', 'comment', str(pr_num), '--repo', 'tryrendition/Rendition', '--body', body],
                         capture_output=True, text=True, cwd=repo_root, env=_clean_env)
             elif fix_target == 'testing':
-                run_notify(tid, 'testing',
-                    f'Fixes applied. Re-running tests (iteration {iteration}/{max_iter})',
-                    product_goal,
-                    f'Running tests #{iteration + 1}')
+                _t_msg = log_transition(task, 'fixing', 'testing',
+                    iteration=iteration, prompt_template='test.md',
+                    extra={'fix_target': 'testing'})
+                run_notify(tid, 'testing', _t_msg, product_goal, f'Running tests #{iteration + 1}')
                 ok = spawn_agent(task, 'testing', 'test.md', task.get('agent'))
                 if ok:
                     apply_updates(tid, {'phase': 'testing', 'status': 'running'})
@@ -1351,10 +1589,10 @@ for task in tasks:
                     run_notify(tid, phase, f'Failed to spawn testing agent', product_goal)
             else:
                 audit_agent = choose_audit_agent(task.get('agent', 'claude'))
-                run_notify(tid, 'auditing',
-                    f'Fixes applied. Re-running audit (iteration {iteration}/{max_iter})',
-                    product_goal,
-                    f'Running audit #{iteration + 1}')
+                _t_msg = log_transition(task, 'fixing', 'auditing',
+                    iteration=iteration, prompt_template='audit.md',
+                    extra={'fix_target': 'auditing', 'audit_agent': audit_agent})
+                run_notify(tid, 'auditing', _t_msg, product_goal, f'Running audit #{iteration + 1}')
                 ok = spawn_agent(task, 'auditing', 'audit.md', audit_agent)
                 if ok:
                     apply_updates(tid, {'phase': 'auditing', 'status': 'running'})
@@ -1408,10 +1646,9 @@ for task in tasks:
                     'prNumber': pr_number,
                     'missingPrRetryCount': 0,
                 })
-                run_notify(tid, 'reviewing',
-                    f'PR created (PR #{pr_number}). Awaiting review.',
-                    product_goal,
-                    'Awaiting human review')
+                _t_msg = log_transition(task, 'pr_creating', 'reviewing',
+                    extra={'pr_number': pr_number})
+                run_notify(tid, 'reviewing', _t_msg, product_goal, 'Awaiting human review')
                 # Post implementation plan as PR comment
                 plan_path = os.path.join(plans_dir, f'{tid}.md')
                 if os.path.isfile(plan_path):
@@ -1439,18 +1676,18 @@ for task in tasks:
                     next_retry = retry_count + 1
                     if fix_result.returncode == 0:
                         apply_updates(tid, {'missingPrRetryCount': next_retry})
-                        run_notify(tid, 'fixing',
-                            f'No PR found after pr_creating success ({pr_lookup_reason}). '
-                            f'Auto-dispatched remediation ({next_retry}/{max_missing_pr_retries}).',
-                            product_goal,
+                        _t_msg = log_transition(task, 'pr_creating', 'fixing',
+                            extra={'reason': 'missing_pr', 'pr_lookup_reason': pr_lookup_reason,
+                                   'remediation_attempt': f'{next_retry}/{max_missing_pr_retries}'})
+                        run_notify(tid, 'fixing', _t_msg, product_goal,
                             'Remediating PR creation and push state')
                     else:
                         print(f'WARNING: dispatch-fix.sh failed for {tid} missing PR: {fix_result.stderr}')
                         apply_updates(tid, {'missingPrRetryCount': next_retry})
-                        run_notify(tid, 'pr_creating',
-                            f'No PR found after pr_creating success ({pr_lookup_reason}). '
-                            f'Auto-remediation dispatch failed ({next_retry}/{max_missing_pr_retries}); will retry.',
-                            product_goal,
+                        _t_msg = log_transition(task, 'pr_creating', 'pr_creating',
+                            extra={'reason': 'missing_pr_dispatch_failed', 'pr_lookup_reason': pr_lookup_reason,
+                                   'remediation_attempt': f'{next_retry}/{max_missing_pr_retries}'})
+                        run_notify(tid, 'pr_creating', _t_msg, product_goal,
                             'Waiting for next remediation attempt')
                 else:
                     apply_updates(tid, {
@@ -1458,10 +1695,10 @@ for task in tasks:
                         'status': 'failed',
                         'failReason': 'pr_missing_after_retries',
                     })
-                    run_notify(tid, 'failed',
-                        f'No PR found after {retry_count} remediation attempt(s) '
-                        f'(reason: {pr_lookup_reason}). Manual intervention required.',
-                        product_goal,
+                    _t_msg = log_transition(task, 'pr_creating', 'failed',
+                        extra={'reason': 'pr_missing_after_retries', 'pr_lookup_reason': pr_lookup_reason,
+                               'retry_count': retry_count})
+                    run_notify(tid, 'failed', _t_msg, product_goal,
                         'Create/fix PR manually, then re-dispatch from reviewing')
             changes_made += 1
 
