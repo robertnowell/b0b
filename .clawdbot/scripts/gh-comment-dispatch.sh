@@ -584,6 +584,18 @@ print(task.get('phase', '') if task else '')
     continue
   fi
 
+  # --- Check if this is an existing PR (not created by pipeline) ---
+  existing_pr_branch=""
+  existing_pr_number=""
+  if [ "$number" != "unknown" ]; then
+    pr_info=$(gh api "repos/${REPO}/pulls/${number}" --jq '.headRefName + " " + (.number | tostring)' 2>/dev/null) || pr_info=""
+    if [ -n "$pr_info" ]; then
+      existing_pr_branch=$(echo "$pr_info" | awk '{print $1}')
+      existing_pr_number=$(echo "$pr_info" | awk '{print $2}')
+      echo "Existing PR #${existing_pr_number} found on branch ${existing_pr_branch} — will update instead of creating new PR"
+    fi
+  fi
+
   # --- Detect "plan only" mode ---
   require_review="false"
   if echo "$body" | grep -qi "plan only"; then
@@ -592,7 +604,7 @@ print(task.get('phase', '') if task else '')
 
   # --- Dispatch task ---
   task_id=$(generate_task_id "$number" "$task_desc")
-  branch=$(generate_branch "$number" "$task_desc")
+  branch="${existing_pr_branch:-$(generate_branch "$number" "$task_desc")}"
   agent="${GH_COMMENT_DEFAULT_AGENT:-claude}"
 
   echo "Dispatching: task=${task_id} branch=${branch} agent=${agent} planOnly=${require_review}"
@@ -615,6 +627,12 @@ print(task.get('phase', '') if task else '')
     "sourceNumber=$number" \
     "sourceCommentId=$comment_id" \
     "sourceCommentUrl=$comment_url"
+
+  # If an existing PR was found, store its number on the task so the pipeline
+  # updates it instead of creating a new PR.
+  if [ -n "$existing_pr_number" ]; then
+    apply_task_update "$task_id" "prNumber=$existing_pr_number"
+  fi
 
   # Store image paths on task so all pipeline phases can access them
   if [ -n "$image_json" ]; then

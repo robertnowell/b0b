@@ -9,7 +9,9 @@
 1. Ensure all changes are committed
 2. Run `pnpm lint` and `pnpm build` in changed packages — fix any errors
 3. Push your branch
-4. Create a PR with `gh pr create` including:
+4. Check if a PR already exists on this branch: `gh pr list --head <branch-name> --json number,url`
+   - **If a PR exists**: just push your changes — the existing PR updates automatically. Do NOT create a new PR. Skip to step 6.
+   - **If no PR exists**: create one with `gh pr create` including:
    - Title: [Package] Brief description
    - Body with ALL sections below (mandatory):
 
