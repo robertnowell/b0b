@@ -48,7 +48,7 @@ fi
 
 # Step 2: Process each task with the state machine
 python3 -c "
-import json, sys, subprocess, os, fcntl, re
+import json, sys, subprocess, os, fcntl, re, datetime
 
 script_dir = sys.argv[1]
 tasks_file = sys.argv[2]
@@ -222,7 +222,9 @@ def format_transition_slack(entry, elapsed=''):
 
     # Verdict + finding counts on one line
     if verdict:
-        v_line = f'📤 {"PASS" if verdict.lower() == "pass" else "FAIL"}'
+        _pass = 'PASS'
+        _fail = 'FAIL'
+        v_line = f'📤 {_pass if verdict.lower() == _pass.lower() else _fail}'
         if sf:
             cc = sf.get('critical_count')
             mc = sf.get('minor_count')
