@@ -95,6 +95,25 @@ def run_notify(task_id, phase, message, product_goal='', next_step='', started_a
         cmd += ['--plan-file', plan_file]
     subprocess.run(cmd, input=message, capture_output=True, text=True, env=_clean_env)
 
+def _get_last_spawn_meta(tid, phase):
+    \"\"\"Read the last spawn_agent entry for this task+phase from transitions JSONL.\"\"\"
+    jsonl_path = os.path.join(log_dir, f'transitions-{tid}.jsonl')
+    if not os.path.exists(jsonl_path):
+        return {}
+    last = {}
+    try:
+        with open(jsonl_path) as f:
+            for line in f:
+                try:
+                    e = json.loads(line)
+                    if e.get('event') == 'spawn_agent' and e.get('phase') == phase:
+                        last = e
+                except json.JSONDecodeError:
+                    continue
+    except OSError:
+        pass
+    return last
+
 def log_transition(task, from_phase, to_phase, verdict='', structured_findings=None,
                    iteration=None, feedback_source='', feedback_size=0,
                    prompt_template='', prompt_file='', prompt_size=0, plan_size=0,
@@ -116,6 +135,16 @@ def log_transition(task, from_phase, to_phase, verdict='', structured_findings=N
     sf = structured_findings or {}
     iter_num = iteration if iteration is not None else task.get('iteration', 0)
     max_iter = task.get('maxIterations', max_iterations)
+
+    # Auto-populate input sizes from last spawn event if not explicitly provided
+    _spawn = _get_last_spawn_meta(tid, from_phase)
+    if _spawn:
+        if not prompt_size:
+            prompt_size = _spawn.get('prompt_size_bytes', 0)
+        if not plan_size:
+            plan_size = _spawn.get('plan_size_bytes', 0)
+        if not feedback_size:
+            feedback_size = _spawn.get('feedback_size_bytes', 0)
 
     entry = {
         'task_id': tid,
@@ -155,7 +184,6 @@ def log_transition(task, from_phase, to_phase, verdict='', structured_findings=N
 
 def format_transition_slack(entry, elapsed=''):
     \"\"\"Format a transition log entry into an enriched Slack notification.\"\"\"
-    tid = entry.get('task_id', '?')
     from_p = entry.get('from_phase', '?')
     to_p = entry.get('to_phase', '?')
     iter_num = entry.get('iteration', 0)
@@ -165,40 +193,45 @@ def format_transition_slack(entry, elapsed=''):
     inp = entry.get('input', {})
     ctx = entry.get('context_forwarded', {})
 
-    lines = [f'Transition: {from_p} -> {to_p} | {tid} | iter {iter_num}/{max_iter}']
+    # Line 1: compact transition summary (task_id already in notify header)
+    line1 = f'{from_p} → {to_p} | iter {iter_num}/{max_iter}'
     if elapsed:
-        lines.append(f'Elapsed: {elapsed}')
+        line1 += f' | {elapsed}'
+    lines = [line1]
 
     # Input summary
     input_parts = []
-    if inp.get('plan_size_bytes'):
-        input_parts.append(f'plan ({inp[\"plan_size_bytes\"] / 1024:.1f}kb)')
     if inp.get('prompt_size_bytes'):
         input_parts.append(f'prompt ({inp[\"prompt_size_bytes\"] / 1024:.1f}kb)')
-    if ctx.get('findings_carried'):
-        input_parts.append(f'{ctx[\"findings_carried\"]} prior findings')
+    if inp.get('plan_size_bytes'):
+        input_parts.append(f'plan ({inp[\"plan_size_bytes\"] / 1024:.1f}kb)')
     ur_size = inp.get('user_request_size_bytes', 0)
     if ur_size:
         input_parts.append(f'user_request ({ur_size / 1024:.1f}kb)')
     elif inp.get('prompt_template', '') not in ('plan.md', 'review-plan.md', ''):
         input_parts.append('user_request (MISSING)')
+    if ctx.get('feedback_size_bytes'):
+        input_parts.append(f'feedback ({ctx[\"feedback_size_bytes\"] / 1024:.1f}kb)')
+    if ctx.get('findings_carried'):
+        input_parts.append(f'{ctx[\"findings_carried\"]} findings')
     img_count = inp.get('image_count', 0)
     if img_count:
         input_parts.append(f'{img_count} images')
     if input_parts:
-        lines.append('Input: ' + ' + '.join(input_parts))
+        lines.append('📥 Input: ' + ' + '.join(input_parts))
 
-    # Output verdict
+    # Verdict + finding counts on one line
     if verdict:
-        v_icon = 'PASS' if verdict.lower() == 'pass' else 'FAIL'
-        lines.append(f'Output: {v_icon}')
+        v_line = f'📤 {"PASS" if verdict.lower() == "pass" else "FAIL"}'
+        if sf:
+            cc = sf.get('critical_count')
+            mc = sf.get('minor_count')
+            if cc is not None or mc is not None:
+                v_line += f' — {cc or 0} critical, {mc or 0} minor'
+        lines.append(v_line)
 
-    # Structured findings detail
+    # Structured findings detail (indented under verdict)
     if sf:
-        cc = sf.get('critical_count')
-        mc = sf.get('minor_count')
-        if cc is not None or mc is not None:
-            lines.append(f'  {cc or 0} critical, {mc or 0} minor issues')
         missing = sf.get('missing', [])
         if missing:
             lines.append(f'  Missing: ' + ', '.join(missing[:5]))
@@ -216,13 +249,8 @@ def format_transition_slack(entry, elapsed=''):
             lines.append(f'  Status: ' + ', '.join(s_parts))
 
     # Context forwarded
-    if ctx.get('feedback_source') or ctx.get('feedback_size_bytes'):
-        fwd = f'Context -> {to_p}:'
-        if ctx.get('feedback_size_bytes'):
-            fwd += f' feedback ({ctx[\"feedback_size_bytes\"] / 1024:.1f}kb)'
-        if ctx.get('feedback_source'):
-            fwd += f' via {ctx[\"feedback_source\"]}'
-        lines.append(fwd)
+    if ctx.get('feedback_source'):
+        lines.append(f'Context → {to_p}: via {ctx[\"feedback_source\"]}')
 
     if inp.get('prompt_template'):
         lines.append(f'Template: {inp[\"prompt_template\"]}')
@@ -823,6 +851,7 @@ for task in tasks:
         branch = task.get('branch', '')
         pr_number = None
         ci_pass = False
+        pr_closed_state = None
         if branch:
             task_repo = get_task_repo(task)
             pr_result = subprocess.run(
@@ -834,6 +863,14 @@ for task in tasks:
                     pr_number = prs[0].get('number')
                     checks = prs[0].get('statusCheckRollup', [])
                     ci_pass = checks and all((c.get('conclusion') or c.get('state', '')).upper() == 'SUCCESS' for c in checks)
+            if not pr_number:
+                task_pr = task.get('prNumber')
+                if task_pr:
+                    state_result = subprocess.run(
+                        ['gh', 'pr', 'view', str(task_pr), '--json', 'state'],
+                        capture_output=True, text=True, cwd=task_repo)
+                    if state_result.returncode == 0 and state_result.stdout.strip():
+                        pr_closed_state = str(json.loads(state_result.stdout).get('state', '')).upper()
         if pr_number and ci_pass:
             apply_updates(tid, {'phase': 'pr_ready', 'status': 'pr_ready', 'prNumber': pr_number, 'conflictFixCount': 0})
             _t_msg = log_transition(task, 'reviewing', 'pr_ready', verdict='pass',
@@ -869,6 +906,19 @@ for task in tasks:
                         else:
                             print(f'WARNING: dispatch-fix.sh failed for {tid} merge conflicts: {fix_result.stderr}')
                     changes_made += 1
+        elif pr_closed_state == 'MERGED':
+            apply_updates(tid, {'phase': 'merged', 'status': 'merged'})
+            _t_msg = log_transition(task, 'reviewing', 'merged', verdict='pass',
+                extra={'pr_number': task.get('prNumber')})
+            run_notify(tid, 'merged', _t_msg, product_goal, 'Done')
+            changes_made += 1
+        elif pr_closed_state == 'CLOSED':
+            apply_updates(tid, {'phase': 'failed', 'status': 'failed',
+                'completedAt': datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')})
+            _t_msg = log_transition(task, 'reviewing', 'failed', verdict='closed',
+                extra={'pr_number': task.get('prNumber'), 'reason': 'pr_manually_closed'})
+            run_notify(tid, 'failed', _t_msg, product_goal, 'PR was closed without merging')
+            changes_made += 1
         # If no PR or CI not passing yet, stay in reviewing (wait for next cycle)
         continue
 
@@ -902,6 +952,13 @@ for task in tasks:
                     _t_msg = log_transition(task, 'pr_ready', 'merged', verdict='pass',
                         extra={'pr_number': pr_number})
                     run_notify(tid, 'merged', _t_msg, product_goal, 'Done')
+                    changes_made += 1
+                elif str(pr_state).upper() == 'CLOSED':
+                    apply_updates(tid, {'phase': 'failed', 'status': 'failed',
+                        'completedAt': datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')})
+                    _t_msg = log_transition(task, 'pr_ready', 'failed', verdict='closed',
+                        extra={'pr_number': pr_number, 'reason': 'pr_manually_closed'})
+                    run_notify(tid, 'failed', _t_msg, product_goal, 'PR was closed without merging')
                     changes_made += 1
                 elif pr_data.get('mergeable', '') == 'CONFLICTING':
                     # PR has merge conflicts — dispatch fix agent (with retry guard)
