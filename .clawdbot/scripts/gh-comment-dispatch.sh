@@ -588,7 +588,7 @@ print(task.get('phase', '') if task else '')
   existing_pr_branch=""
   existing_pr_number=""
   if [ "$number" != "unknown" ]; then
-    pr_info=$(gh api "repos/${REPO}/pulls/${number}" --jq '.headRefName + " " + (.number | tostring)' 2>/dev/null) || pr_info=""
+    pr_info=$(gh api "repos/${REPO}/pulls/${number}" --jq '.head.ref + " " + (.number | tostring)' 2>/dev/null) || pr_info=""
     if [ -n "$pr_info" ]; then
       existing_pr_branch=$(echo "$pr_info" | awk '{print $1}')
       existing_pr_number=$(echo "$pr_info" | awk '{print $2}')
