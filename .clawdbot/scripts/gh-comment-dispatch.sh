@@ -175,6 +175,10 @@ try:
         src = str(t.get('sourceNumber', ''))
         pr = str(t.get('prNumber', ''))
         branch = t.get('branch', '')
+        # Skip tasks whose prNumber is set to a different number
+        # (task has graduated to a different PR)
+        if pr and pr != number:
+            continue
         if src == number or pr == number or t.get('id', '').startswith(f'gh-{number}-'):
             print(t.get('id', ''))
             sys.exit(0)

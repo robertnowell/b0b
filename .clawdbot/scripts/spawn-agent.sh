@@ -91,9 +91,16 @@ mkdir -p "$(dirname "$WORKTREE_DIR")"
 # Create worktree
 cd "$REPO_ROOT"
 git fetch origin main --quiet 2>/dev/null || true
+git fetch origin "$BRANCH" --quiet 2>/dev/null || true
+
+# Use remote branch as base if it exists (e.g. existing PR), otherwise main
+BASE_REF="origin/main"
+if git rev-parse --verify "origin/$BRANCH" >/dev/null 2>&1; then
+  BASE_REF="origin/$BRANCH"
+fi
 
 if [ ! -d "$WORKTREE_DIR" ]; then
-  git worktree add "$WORKTREE_DIR" -b "$BRANCH" origin/main 2>/dev/null || \
+  git worktree add "$WORKTREE_DIR" -b "$BRANCH" "$BASE_REF" 2>/dev/null || \
   git worktree add "$WORKTREE_DIR" "$BRANCH" 2>/dev/null || \
   { echo "ERROR: Failed to create worktree"; exit 1; }
 fi
