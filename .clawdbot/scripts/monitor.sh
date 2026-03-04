@@ -1333,7 +1333,8 @@ for task in tasks:
                 pr_num = task.get('prNumber')
                 feedback = task.get('lastFeedback', '')
                 if pr_num and feedback:
-                    body = f'## Feedback Addressed\\n\\n{feedback}\\n\\n---\\n*Posted by Kopiclaw pipeline*'
+                    safe_feedback = feedback.replace('@kopi-claw', 'kopi-claw')
+                    body = f'## Feedback Addressed\\n\\n{safe_feedback}\\n\\n---\\n*Posted by Kopiclaw pipeline*'
                     subprocess.run(
                         ['gh', 'issue', 'comment', str(pr_num), '--repo', 'tryrendition/Rendition', '--body', body],
                         capture_output=True, text=True, cwd=repo_root, env=_clean_env)
@@ -1366,28 +1367,39 @@ for task in tasks:
             # Validate PR existence before advancing to reviewing.
             branch = task.get('branch', '')
             task_repo = get_task_repo(task)
-            pr_number = None
+            pr_number = task.get('prNumber')  # May already be set (e.g. existing PR from dispatch)
             pr_lookup_reason = 'no_pr_found'
-            if branch:
-                pr_result = subprocess.run(
-                    ['gh', 'pr', 'list', '--head', branch, '--state', 'all', '--json', 'number', '--limit', '1'],
+            if pr_number:
+                # Verify the pre-existing PR is still valid
+                verify_result = subprocess.run(
+                    ['gh', 'api', f'repos/tryrendition/Rendition/pulls/{pr_number}', '--jq', '.state'],
                     capture_output=True, text=True, cwd=task_repo)
-                if pr_result.returncode == 0 and pr_result.stdout.strip():
-                    try:
-                        prs = json.loads(pr_result.stdout)
-                    except json.JSONDecodeError:
-                        prs = []
-                        pr_lookup_reason = 'invalid_pr_list_json'
-                    if prs:
-                        pr_number = prs[0].get('number')
-                    else:
-                        pr_lookup_reason = 'no_pr_found'
-                elif pr_result.returncode != 0:
-                    pr_lookup_reason = f'gh_pr_list_failed_rc_{pr_result.returncode}'
+                if verify_result.returncode == 0 and verify_result.stdout.strip() == 'open':
+                    pr_lookup_reason = 'pre_existing_pr'
                 else:
-                    pr_lookup_reason = 'empty_pr_list_output'
-            else:
-                pr_lookup_reason = 'missing_branch'
+                    pr_number = None  # Fall through to branch-based lookup
+                    pr_lookup_reason = 'pre_existing_pr_invalid'
+            if not pr_number:
+                if branch:
+                    pr_result = subprocess.run(
+                        ['gh', 'pr', 'list', '--head', branch, '--state', 'all', '--json', 'number', '--limit', '1'],
+                        capture_output=True, text=True, cwd=task_repo)
+                    if pr_result.returncode == 0 and pr_result.stdout.strip():
+                        try:
+                            prs = json.loads(pr_result.stdout)
+                        except json.JSONDecodeError:
+                            prs = []
+                            pr_lookup_reason = 'invalid_pr_list_json'
+                        if prs:
+                            pr_number = prs[0].get('number')
+                        else:
+                            pr_lookup_reason = 'no_pr_found'
+                    elif pr_result.returncode != 0:
+                        pr_lookup_reason = f'gh_pr_list_failed_rc_{pr_result.returncode}'
+                    else:
+                        pr_lookup_reason = 'empty_pr_list_output'
+                else:
+                    pr_lookup_reason = 'missing_branch'
 
             if pr_number:
                 apply_updates(tid, {
