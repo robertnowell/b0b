@@ -208,7 +208,7 @@ def format_transition_slack(entry, elapsed=''):
     ur_size = inp.get('user_request_size_bytes', 0)
     if ur_size:
         input_parts.append(f'user_request ({ur_size / 1024:.1f}kb)')
-    elif inp.get('prompt_template', '') not in ('plan.md', 'review-plan.md', ''):
+    else:
         input_parts.append('user_request (MISSING)')
     if ctx.get('feedback_size_bytes'):
         input_parts.append(f'feedback ({ctx[\"feedback_size_bytes\"] / 1024:.1f}kb)')
@@ -555,6 +555,20 @@ def spawn_agent(task, phase, prompt_template, agent_override=None):
     product_goal = task.get('productGoal', '')
     task_wb = get_task_worktree_base(task)
     worktree = task.get('worktree', os.path.join(task_wb, tid))
+
+    # Clean worktree before spawning to remove accumulated uncommitted state from prior phases
+    if worktree and os.path.isdir(worktree):
+        dirty_check = subprocess.run(
+            ['git', 'status', '--porcelain'],
+            capture_output=True, text=True, cwd=worktree)
+        dirty_files = dirty_check.stdout.strip()
+        if dirty_files:
+            file_count = len(dirty_files.splitlines())
+            print(f'INFO: Cleaning {file_count} dirty file(s) in worktree before {phase} spawn for {tid}')
+            for line in dirty_files.splitlines():
+                print(f'  {line}')
+            subprocess.run(['git', 'checkout', '.'], capture_output=True, cwd=worktree)
+            subprocess.run(['git', 'clean', '-fd'], capture_output=True, cwd=worktree)
 
     # Build prompt file path
     prompts_dir_local = os.path.join(os.path.dirname(script_dir), 'prompts')

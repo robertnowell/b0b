@@ -105,6 +105,11 @@ if [ ! -d "$WORKTREE_DIR" ]; then
   { echo "ERROR: Failed to create worktree"; exit 1; }
 fi
 
+# Ensure plan.md is gitignored in worktree so planning artifacts don't pollute git status
+if ! grep -qx 'plan.md' "$WORKTREE_DIR/.gitignore" 2>/dev/null; then
+  echo 'plan.md' >> "$WORKTREE_DIR/.gitignore"
+fi
+
 # Kill existing session if any
 tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
 
@@ -218,6 +223,7 @@ try:
         source_comment_id = existing.get('sourceCommentId')
         source_comment_url = existing.get('sourceCommentUrl')
         conflict_fix_count = existing.get('conflictFixCount', 0)
+        user_request = existing.get('userRequest', '') or user_request
         tasks = [t for t in tasks if t.get('id') != task_id]
 
     entry = {
