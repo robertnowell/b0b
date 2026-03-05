@@ -14,7 +14,6 @@ source "$(cd "$(dirname "$0")" && pwd)/config.sh"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SPAWN="${SCRIPT_DIR}/spawn-agent.sh"
-FILL_TEMPLATE="${SCRIPT_DIR}/fill-template.sh"
 
 # shellcheck source=notify.sh
 source "${SCRIPT_DIR}/notify.sh"
@@ -60,43 +59,21 @@ if [[ "$TASK_JSON" == ERROR:not_found ]]; then
   exit 1
 fi
 
-# Extract fields
+# Extract fields needed for spawn-agent.sh (which doesn't use the helper)
 BRANCH=$(echo "$TASK_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin)['branch'])")
 AGENT=$(echo "$TASK_JSON" | python3 -c "import json,sys; t=json.load(sys.stdin); print(sys.argv[1] if sys.argv[1] else t.get('agent','claude'))" "$AGENT_OVERRIDE")
 DESCRIPTION=$(echo "$TASK_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('description',''))")
 PRODUCT_GOAL=$(echo "$TASK_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('productGoal',''))")
-USER_REQUEST=$(echo "$TASK_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('userRequest',''))")
-IMAGE_FILES=$(echo "$TASK_JSON" | python3 -c "import json,sys; t=json.load(sys.stdin); files=t.get('imageFiles',[]); print('\n'.join(files) if isinstance(files,list) else '')")
 
-# Build IMAGES text from image file paths
-IMAGES_TEXT=""
-if [ -n "$IMAGE_FILES" ]; then
-  IMAGES_TEXT="Visual context from the original request. Read these image files to see screenshots:"
-  while IFS= read -r img_path; do
-    [ -z "$img_path" ] && continue
-    IMAGES_TEXT="${IMAGES_TEXT}
-- ${img_path}"
-  done <<< "$IMAGE_FILES"
-fi
-
-# Fill fix-feedback prompt with the feedback
+# Fill fix-feedback prompt using centralized context builder
+BUILD_VARS="${SCRIPT_DIR}/build-context-vars.sh"
 TEMPLATE="${PROMPTS_DIR}/fix-feedback.md"
 FILLED_PROMPT="${LOG_DIR}/prompt-${TASK_ID}-fixing-$(date +%s).md"
 mkdir -p "$LOG_DIR"
 
-"$FILL_TEMPLATE" "$TEMPLATE" \
-  --var TASK_DESCRIPTION="$DESCRIPTION" \
-  --var FEEDBACK="$FEEDBACK" \
-  --var DESCRIPTION="$DESCRIPTION" \
-  --var PRODUCT_GOAL="$PRODUCT_GOAL" \
-  --var TASK_ID="$TASK_ID" \
-  --var PRD="$PRODUCT_GOAL" \
-  --var PLAN="" \
-  --var DELIVERABLES="$DESCRIPTION" \
-  --var FEATURE="$DESCRIPTION" \
-  --var DIFF="" \
-  --var IMAGES="$IMAGES_TEXT" \
-  --var USER_REQUEST="$USER_REQUEST" \
+"$BUILD_VARS" --task-id "$TASK_ID" --phase fixing \
+  --template "$TEMPLATE" \
+  --override FEEDBACK="$FEEDBACK" \
   > "$FILLED_PROMPT"
 
 # Spawn agent — spawn-agent.sh will reuse existing worktree

@@ -9,6 +9,9 @@ Read CLAUDE.md for repo conventions.
 ## Product Goal
 {PRODUCT_GOAL}
 
+## Implementation Plan
+{PLAN}
+
 ## Original User Request
 {USER_REQUEST}
 

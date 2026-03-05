@@ -10,7 +10,6 @@ source "$(cd "$(dirname "$0")" && pwd)/config.sh"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SPAWN="${SCRIPT_DIR}/spawn-agent.sh"
-FILL_TEMPLATE="${SCRIPT_DIR}/fill-template.sh"
 source "${SCRIPT_DIR}/notify.sh"
 
 # Parse args
@@ -67,21 +66,12 @@ if [ ! -f "$PLAN_FILE" ]; then
 fi
 PLAN_CONTENT="$(cat "$PLAN_FILE")"
 
-# Fill implementation prompt
+# Fill implementation prompt using centralized context builder
+BUILD_VARS="${SCRIPT_DIR}/build-context-vars.sh"
 TEMPLATE="${PROMPTS_DIR}/implement.md"
 FILLED_PROMPT="${LOG_DIR}/prompt-${TASK_ID}-implementing-$(date +%s).md"
-"$FILL_TEMPLATE" "$TEMPLATE" \
-  --var PRD="$PRODUCT_GOAL" \
-  --var PLAN="$PLAN_CONTENT" \
-  --var DELIVERABLES="$DESCRIPTION" \
-  --var TASK_DESCRIPTION="$DESCRIPTION" \
-  --var FEATURE="$DESCRIPTION" \
-  --var FEEDBACK="" \
-  --var DESCRIPTION="$DESCRIPTION" \
-  --var PRODUCT_GOAL="$PRODUCT_GOAL" \
-  --var DIFF="$PLAN_CONTENT" \
-  --var TASK_ID="$TASK_ID" \
-  > "$FILLED_PROMPT"
+"$BUILD_VARS" --task-id "$TASK_ID" --phase implementing \
+  --template "$TEMPLATE" > "$FILLED_PROMPT"
 
 # Spawn implementing agent
 SPAWN_ARGS=("$TASK_ID" "$BRANCH" "$AGENT" "$FILLED_PROMPT" ""

@@ -144,7 +144,7 @@ mkdir -p "$LOG_DIR"
   --var FEEDBACK="" \
   --var DESCRIPTION="$DESCRIPTION" \
   --var PRODUCT_GOAL="$PRODUCT_GOAL" \
-  --var DIFF="$PLAN_CONTENT" \
+  --var DIFF="" \
   --var TASK_ID="$TASK_ID" \
   --var USER_REQUEST="$USER_REQUEST" \
   --var IMAGES="$IMAGES_TEXT" \
