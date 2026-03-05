@@ -3,10 +3,19 @@
 ## Task
 {TASK_DESCRIPTION}
 
+## Product Goal
+{PRODUCT_GOAL}
+
 ## Original User Request
 {USER_REQUEST}
 
 {IMAGES}
+
+## Implementation Plan
+{PLAN}
+
+## Implementation Diff
+{DIFF}
 
 ## Instructions
 1. Run `git status` to see all changes in the worktree

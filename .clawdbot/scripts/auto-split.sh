@@ -13,7 +13,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 FILL_TEMPLATE="${SCRIPT_DIR}/fill-template.sh"
 
 # Parse args
-TASK_ID="" DESCRIPTION="" PRODUCT_GOAL="" FINDINGS="[]" AGENT="claude"
+TASK_ID="" DESCRIPTION="" PRODUCT_GOAL="" FINDINGS="[]" AGENT="claude" USER_REQUEST=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --task-id)       TASK_ID="$2"; shift 2 ;;
@@ -21,6 +21,7 @@ while [[ $# -gt 0 ]]; do
     --product-goal)  PRODUCT_GOAL="$2"; shift 2 ;;
     --findings)      FINDINGS="$2"; shift 2 ;;
     --agent)         AGENT="$2"; shift 2 ;;
+    --user-request)  USER_REQUEST="$2"; shift 2 ;;
     *) echo "ERROR: Unknown arg: $1" >&2; exit 1 ;;
   esac
 done
@@ -53,6 +54,7 @@ trap 'rm -f "$FILLED_PROMPT"' EXIT
   --var PRODUCT_GOAL="${PRODUCT_GOAL:-N/A}" \
   --var FINDINGS="$FINDINGS_TEXT" \
   --var TASK_ID="$TASK_ID" \
+  --var USER_REQUEST="$USER_REQUEST" \
   > "$FILLED_PROMPT"
 
 # Run agent synchronously with timeout (same pattern as review-plan.sh)

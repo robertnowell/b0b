@@ -10,7 +10,6 @@ source "$(cd "$(dirname "$0")" && pwd)/config.sh"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SPAWN="${SCRIPT_DIR}/spawn-agent.sh"
-FILL_TEMPLATE="${SCRIPT_DIR}/fill-template.sh"
 source "${SCRIPT_DIR}/notify.sh"
 
 TASK_ID="${1:?Usage: reject-plan.sh <task-id> [--reason 'why'] [--split]}"
@@ -99,27 +98,13 @@ else
     exit 1
   fi
 
-  # Read previous plan for context
-  PREV_PLAN=""
-  PLAN_FILE="${PLANS_DIR}/${TASK_ID}.md"
-  if [ -f "$PLAN_FILE" ]; then
-    PREV_PLAN="$(cat "$PLAN_FILE")"
-  fi
-
-  # Fill planning prompt with feedback
+  # Fill planning prompt with feedback using centralized context builder
+  BUILD_VARS="${SCRIPT_DIR}/build-context-vars.sh"
   TEMPLATE="${PROMPTS_DIR}/plan.md"
   FILLED_PROMPT="${LOG_DIR}/prompt-${TASK_ID}-planning-$(date +%s).md"
-  "$FILL_TEMPLATE" "$TEMPLATE" \
-    --var PRD="$PRODUCT_GOAL" \
-    --var PLAN="$PREV_PLAN" \
-    --var DELIVERABLES="$DESCRIPTION" \
-    --var TASK_DESCRIPTION="$DESCRIPTION" \
-    --var FEATURE="$DESCRIPTION" \
-    --var FEEDBACK="Plan rejected. Reason: ${REASON:-No specific reason given}. Please revise." \
-    --var DESCRIPTION="$DESCRIPTION" \
-    --var PRODUCT_GOAL="$PRODUCT_GOAL" \
-    --var DIFF="" \
-    --var TASK_ID="$TASK_ID" \
+  "$BUILD_VARS" --task-id "$TASK_ID" --phase planning \
+    --template "$TEMPLATE" \
+    --override FEEDBACK="Plan rejected. Reason: ${REASON:-No specific reason given}. Please revise." \
     > "$FILLED_PROMPT"
 
   # Append rejection context

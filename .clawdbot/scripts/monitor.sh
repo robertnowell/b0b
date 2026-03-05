@@ -545,6 +545,53 @@ def phase_to_template(phase):
     }
     return mapping.get(phase, 'implement.md')
 
+def build_context_vars(task, phase):
+    \"\"\"Build all standard template variables from a task object.
+
+    Single source of truth for template variable construction.
+    PLAN and DIFF are always separate — PLAN is the implementation plan,
+    DIFF is the git diff from the worktree.
+    \"\"\"
+    description = task.get('description', '')
+    product_goal = task.get('productGoal', '')
+    tid = task.get('id', '')
+
+    plan_text = task.get('planContent', '') or description
+
+    # Compute diff from worktree (always separate from plan)
+    diff_text = ''
+    task_wb = get_task_worktree_base(task)
+    worktree = task.get('worktree', os.path.join(task_wb, tid))
+    if worktree and os.path.isdir(worktree):
+        diff_result = subprocess.run(
+            ['git', 'diff', 'origin/main...HEAD'],
+            capture_output=True, text=True, cwd=worktree)
+        if diff_result.returncode == 0 and diff_result.stdout.strip():
+            diff_text = diff_result.stdout
+
+    image_files = task.get('imageFiles', [])
+    images_text = ''
+    if image_files and isinstance(image_files, list):
+        images_text = 'Visual context from the original request. Read these image files to see screenshots:\\n' + '\\n'.join(f'- {p}' for p in image_files)
+
+    user_request = task.get('userRequest', '') or \
+        'No original request provided. Base your plan strictly on the task description and product goal. Do NOT add scope beyond what is explicitly described.'
+
+    return {
+        'TASK_DESCRIPTION': description,
+        'PRD': product_goal,
+        'PLAN': plan_text,
+        'DELIVERABLES': description,
+        'FEEDBACK': '',
+        'FEATURE': description,
+        'DESCRIPTION': description,
+        'PRODUCT_GOAL': product_goal,
+        'DIFF': diff_text,
+        'TASK_ID': tid,
+        'IMAGES': images_text,
+        'USER_REQUEST': user_request,
+    }
+
 def spawn_agent(task, phase, prompt_template, agent_override=None):
     \"\"\"Spawn an agent for the next phase. Uses fill-template.sh for prompt generation.\"\"\"
     import time as _time
@@ -577,20 +624,12 @@ def spawn_agent(task, phase, prompt_template, agent_override=None):
         print(f'WARNING: Prompt template not found: {prompt_path}')
         return False
 
-    # Build PLAN: use planContent if available, git diff for audit phases, description otherwise
-    plan_text = task.get('planContent', '') or description
-    if phase in ('auditing', 'testing') and worktree and os.path.isdir(worktree):
-        diff_result = subprocess.run(
-            ['git', 'diff', 'origin/main...HEAD'],
-            capture_output=True, text=True, cwd=worktree)
-        if diff_result.returncode == 0 and diff_result.stdout.strip():
-            plan_text = diff_result.stdout
-        else:
-            print(f'WARNING: git diff empty/failed for {tid}, falling back to description')
+    # Build all template variables from centralized function
+    _vars = build_context_vars(task, phase)
 
-    # Build feedback text: for fixing phase, prepend structured assessment then raw log tail
+    # Phase-specific: build feedback for fixing phase
     findings = task.get('findings', [])
-    feedback_text = '\n'.join(f'- {f}' for f in findings) if findings else 'No previous findings.'
+    feedback_text = '\\n'.join(f'- {f}' for f in findings) if findings else 'No previous findings.'
     if phase == 'fixing':
         structured = task.get('lastStructuredFindings', {})
         structured_header = ''
@@ -629,6 +668,23 @@ def spawn_agent(task, phase, prompt_template, agent_override=None):
             feedback_text = structured_header + '## Raw Log (last 200 lines)\\n' + ''.join(tail_lines)
         elif structured_header:
             feedback_text = structured_header
+    _vars['FEEDBACK'] = feedback_text
+
+    # Validate context completeness
+    _phase_required = {
+        'planning':     ['PRODUCT_GOAL', 'TASK_DESCRIPTION', 'USER_REQUEST'],
+        'implementing': ['PLAN', 'PRODUCT_GOAL', 'TASK_DESCRIPTION', 'USER_REQUEST'],
+        'auditing':     ['PLAN', 'DIFF', 'PRD', 'USER_REQUEST'],
+        'testing':      ['PLAN', 'DIFF', 'PRODUCT_GOAL', 'USER_REQUEST'],
+        'fixing':       ['PLAN', 'DIFF', 'FEEDBACK', 'PRODUCT_GOAL', 'USER_REQUEST'],
+        'pr_creating':  ['PLAN', 'DIFF', 'PRODUCT_GOAL', 'TASK_DESCRIPTION', 'USER_REQUEST'],
+    }
+    _required = _phase_required.get(phase, [])
+    _fallback_prefix = 'No original request provided.'
+    _missing = [k for k in _required
+                if not _vars.get(k, '').strip() or _vars.get(k, '').startswith(_fallback_prefix)]
+    if _missing:
+        print(f'WARNING: Phase {phase} for {tid} missing context: {", ".join(_missing)}', file=sys.stderr)
 
     # Fill template in-process (avoids ARG_MAX/E2BIG when plan/diff/feedback are large)
     import re as _re
@@ -639,27 +695,6 @@ def spawn_agent(task, phase, prompt_template, agent_override=None):
         print(f'WARNING: Could not read prompt template {prompt_path}: {e}')
         return False
 
-    # Build images instruction from task.imageFiles
-    _image_files = task.get('imageFiles', [])
-    if _image_files and isinstance(_image_files, list):
-        _images_text = 'Visual context from the original request. Read these image files to see screenshots:\\n' + '\\n'.join(f'- {p}' for p in _image_files)
-    else:
-        _images_text = ''
-
-    _vars = {
-        'TASK_DESCRIPTION': description,
-        'PRD': product_goal,
-        'PLAN': plan_text,
-        'DELIVERABLES': description,
-        'FEEDBACK': feedback_text,
-        'FEATURE': description,
-        'DESCRIPTION': description,
-        'PRODUCT_GOAL': product_goal,
-        'DIFF': plan_text,
-        'TASK_ID': tid,
-        'IMAGES': _images_text,
-        'USER_REQUEST': task.get('userRequest', '') or 'No original request provided. Base your plan strictly on the task description and product goal. Do NOT add scope beyond what is explicitly described.',
-    }
     for _k, _v in _vars.items():
         prompt_content = prompt_content.replace('{' + _k + '}', _v)
 
@@ -670,14 +705,17 @@ def spawn_agent(task, phase, prompt_template, agent_override=None):
     # Add iteration context if we have findings
     if findings:
         iteration = task.get('iteration', 0)
-        findings_text = '\n'.join(f'- Iteration {i+1}: {f}' for i, f in enumerate(findings))
-        prompt_content += f'\n\n## Previous Iteration Findings (iteration {iteration})\n{findings_text}\n'
-        prompt_content += '\nAddress the issues from previous iterations.\n'
+        findings_text = '\\n'.join(f'- Iteration {i+1}: {f}' for i, f in enumerate(findings))
+        prompt_content += f'\\n\\n## Previous Iteration Findings (iteration {iteration})\\n{findings_text}\\n'
+        prompt_content += '\\nAddress the issues from previous iterations.\\n'
 
     # Write the filled prompt — include timestamp to avoid collisions on concurrent runs
     prompt_file = os.path.join(log_dir, f'prompt-{tid}-{phase}-{int(_time.time())}.md')
     with open(prompt_file, 'w') as f:
         f.write(prompt_content)
+
+    plan_text = _vars['PLAN']
+    diff_text = _vars['DIFF']
 
     # Log spawn input context to transition JSONL
     _spawn_entry = {
@@ -690,11 +728,17 @@ def spawn_agent(task, phase, prompt_template, agent_override=None):
         'prompt_file': prompt_file,
         'prompt_size_bytes': len(prompt_content),
         'plan_size_bytes': len(plan_text),
+        'diff_size_bytes': len(diff_text),
         'feedback_size_bytes': len(feedback_text),
         'findings_count': len(findings),
         'image_count': len(task.get('imageFiles', [])),
         'user_request_size_bytes': len(task.get('userRequest', '')),
         'iteration': task.get('iteration', 0),
+        'context_validation': {
+            'valid': len(_missing) == 0,
+            'missing': _missing,
+            'provided': {k: len(v) for k, v in _vars.items() if v.strip()},
+        },
     }
     _transitions_file = os.path.join(log_dir, f'transitions-{tid}.jsonl')
     try:
@@ -1064,13 +1108,17 @@ for task in tasks:
 
         elif should_split:
             auto_split_script = os.path.join(script_dir, 'auto-split.sh')
-            split_result = subprocess.run(
-                [auto_split_script,
+            split_cmd = [auto_split_script,
                  '--task-id', tid,
                  '--description', description,
                  '--product-goal', product_goal,
                  '--findings', json.dumps(task.get('findings', [])),
-                 '--agent', task.get('agent', 'claude')],
+                 '--agent', task.get('agent', 'claude')]
+            user_req = task.get('userRequest', '')
+            if user_req:
+                split_cmd += ['--user-request', user_req]
+            split_result = subprocess.run(
+                split_cmd,
                 capture_output=True, text=True, cwd=get_task_repo(task),
                 env=_clean_env)
 
@@ -1092,6 +1140,9 @@ for task in tasks:
                             '--phase', 'planning',
                             '--require-plan-review', 'false',
                         ]
+                        parent_user_req = task.get('userRequest', '')
+                        if parent_user_req:
+                            dispatch_cmd += ['--user-request', parent_user_req]
                         d_result = subprocess.run(dispatch_cmd, capture_output=True, text=True,
                                                   cwd=get_task_repo(task), env=_clean_env)
                         if d_result.returncode == 0:
