@@ -79,6 +79,11 @@ if [[ "$PHASE" != "planning" ]]; then
 fi
 [[ -n "$AGENT" ]]        || { echo "ERROR: --agent is required" >&2; exit 1; }
 
+if [[ -z "${USER_REQUEST:-}" ]]; then
+  echo "WARNING: --user-request not provided. Planning agent will lack original conversation context." >&2
+  echo "         This may cause scope drift. Consider adding --user-request." >&2
+fi
+
 # Validate formats (match spawn-agent.sh conventions)
 [[ "$TASK_ID" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]] || { echo "ERROR: Invalid task ID" >&2; exit 1; }
 [[ "$BRANCH" =~ ^[a-zA-Z0-9._/-]+$ ]]            || { echo "ERROR: Invalid branch name" >&2; exit 1; }
@@ -190,7 +195,7 @@ try:
     with open(tasks_file) as f:
         tasks = json.load(f)
     for t in tasks:
-        if t['id'] == task_id:
+        if t.get('id') == task_id:
             t['requiresPlanReview'] = require_review.lower() == 'true'
             if workspace.lower() == 'true':
                 t['workspace'] = True
