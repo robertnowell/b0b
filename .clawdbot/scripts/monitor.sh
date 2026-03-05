@@ -684,7 +684,8 @@ def spawn_agent(task, phase, prompt_template, agent_override=None):
     _missing = [k for k in _required
                 if not _vars.get(k, '').strip() or _vars.get(k, '').startswith(_fallback_prefix)]
     if _missing:
-        print(f'WARNING: Phase {phase} for {tid} missing context: {", ".join(_missing)}', file=sys.stderr)
+        _msg = ', '.join(_missing)
+        print(f'WARNING: Phase {phase} for {tid} missing context: {_msg}', file=sys.stderr)
 
     # Fill template in-process (avoids ARG_MAX/E2BIG when plan/diff/feedback are large)
     import re as _re
