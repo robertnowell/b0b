@@ -1269,7 +1269,10 @@ for task in tasks:
             run_notify(tid, phase, _t_msg, product_goal, f'Respawning in {phase} phase')
             task['iteration'] = iteration
             task['findings'] = new_findings
-            ok = spawn_agent(task, phase, phase_to_template(phase), task.get('agent'))
+            agent_override = task.get('agent')
+            if phase == 'auditing':
+                agent_override = choose_audit_agent(task.get('agent', 'claude'))
+            ok = spawn_agent(task, phase, phase_to_template(phase), agent_override)
             if ok:
                 apply_updates(tid, {
                     'iteration': iteration,
@@ -1308,7 +1311,10 @@ for task in tasks:
             run_notify(tid, phase, _t_msg, product_goal, f'Respawning in {phase} phase')
             task['iteration'] = iteration
             task['findings'] = new_findings
-            ok = spawn_agent(task, phase, phase_to_template(phase), task.get('agent'))
+            agent_override = task.get('agent')
+            if phase == 'auditing':
+                agent_override = choose_audit_agent(task.get('agent', 'claude'))
+            ok = spawn_agent(task, phase, phase_to_template(phase), agent_override)
             if ok:
                 apply_updates(tid, {
                     'iteration': iteration,
