@@ -229,7 +229,7 @@ Every code task flows through these phases. **Do not skip phases.**
 1. PLANNING     → Spawn agent to investigate codebase + write plan
 2. PLAN REVIEW  → I review the plan. **Default: auto-advance** (no manual review needed). Post the plan to Slack for visibility, but don't wait for approval — advance to implementation. If the human requests manual review for a task, or the task is high-risk (schema migrations, auth, billing, data deletion), hold for explicit approval.
 3. IMPLEMENT    → Agent implements the approved plan
-4. AUDIT        → Different agent audits the diff (cross-agent review)
+4. AUDIT        → Different agent audits the diff (cross-agent review: codex↔claude swap)
 5. FIX          → Loop back if audit fails (max 4 iterations total)
 6. TEST         → Agent runs tests
 7. PR           → Agent creates PR
@@ -242,12 +242,13 @@ Every code task flows through these phases. **Do not skip phases.**
 1. **Never read source code to investigate a bug.** Spawn a planning agent instead. I can glance at a file to understand context for a review, but investigation is the agent's job.
 2. **Never write or edit code in the repo.** That's what agents are for. I write prompts, plans, and docs — not application code.
 3. **Never skip the planning phase.** Even for "simple" fixes. The planning agent might find complexity I'd miss, and it creates an audit trail.
-4. **Always use the pipeline scripts for ANY coding/investigation work.** Scripts live in `$REPO_ROOT/.clawdbot/scripts/`. Use `spawn-agent.sh` for planning, `dispatch.sh` for implementing onward, `monitor.sh` for advancing phases. This means:
-   - **NEVER run `claude -p`, `codex exec`, or any coding agent directly via `exec`.** Every agent must go through `spawn-agent.sh` so it gets tracked in `active-tasks.json` and shows up in Slack alerts.
-   - **NEVER use `sessions_spawn` for code investigation or planning tasks** — those go through `spawn-agent.sh --phase planning`.
+4. **Always use the pipeline scripts for ANY coding/investigation work.** Scripts live in `$REPO_ROOT/.clawdbot/scripts/`. Use `dispatch.sh` for ALL phases (including planning), `monitor.sh` advances phases automatically. This means:
+   - **NEVER run `claude -p`, `codex exec`, or any coding agent directly via `exec`.** Every agent must go through `dispatch.sh` so it gets tracked in `active-tasks.json` and shows up in Slack alerts.
+   - **NEVER use `sessions_spawn` for code investigation or planning tasks** — those go through `dispatch.sh --phase planning`.
+   - **ALWAYS pass `--user-request` with the original user message** when dispatching. Without it, agents lose user context for the entire task lifecycle.
    - **If it touches the product repo, it goes through the pipeline. No exceptions.**
    - The only agents that DON'T need the pipeline are workspace-only tasks (editing AGENTS.md, MEMORY.md, etc.) — and those don't need agents at all.
-5. **Review every plan before approving implementation.** This is where my product judgment matters most. Does the plan match the user's intent? Are there edge cases? Is the scope right?
+5. **Plans auto-advance by default.** The pipeline posts the full plan to Slack for visibility but doesn't wait for approval. For high-risk tasks (schema migrations, auth, billing, data deletion), dispatch with `--require-plan-review true` to hold for explicit approval. When reviewing manually, check: does the plan match the user's intent? Are there edge cases? Is the scope right?
 6. **Always post the FULL plan to `#project-kopi-claw` (C0AJAR3S76U) when a plan reaches plan_review.** Not a summary — the entire plan text. Then ping `<@UXXXXXXXXXXXX>` so Robert gets notified. This is the primary review surface. Do this every time, no exceptions.
 7. **Always post to `#alerts-kopi-claw`** (`C0AHGH5FH42`) for every phase transition — planning, plan review, implementing, auditing, fixing, testing, PR, merged. This is the audit log.
 8. **Always post to `#alerts-kopi-claw` before spawning any agent** — pipeline agents, sub-agents, investigation agents, anything. The human should see "X started" before the work begins, not after.
@@ -259,23 +260,44 @@ Every code task flows through these phases. **Do not skip phases.**
 # Scripts live in the product repo at $REPO_ROOT/.clawdbot/scripts/
 # $REPO_ROOT is /Users/kopi/Projects/kopi (set in config.sh)
 
-# Start a new task (planning phase) — use spawn-agent.sh
-$REPO_ROOT/.clawdbot/scripts/spawn-agent.sh <task-id> <branch> claude <prompt.md> \
-  --phase planning --description "..." --product-goal "..."
+# Start a new task (planning phase)
+# ALWAYS use dispatch.sh — it fills prompt templates with all context variables
+# ALWAYS pass --user-request with the original Slack message / GitHub comment
+$REPO_ROOT/.clawdbot/scripts/dispatch.sh \
+  --task-id <id> --branch <branch> --agent claude \
+  --phase planning \
+  --description "Specific engineering task" \
+  --product-goal "What product goal this serves" \
+  --user-request "The original user message / Slack text / GH comment" \
+  --image-files "/path/to/screenshot.png"  # if user shared images
 
-# Kick off implementation (after plan is approved)
+# Kick off implementation (after plan is approved) — usually handled by monitor.sh
 $REPO_ROOT/.clawdbot/scripts/dispatch.sh --task-id <id> --branch <branch> --agent claude \
-  --plan-file <plan.md> --description "..." --product-goal "..."
+  --plan-file <plan.md> --phase implementing \
+  --description "..." --product-goal "..." --user-request "..."
+
+# Approve a plan (advances plan_review → implementing)
+$REPO_ROOT/.clawdbot/scripts/approve-plan.sh <task-id>
+
+# Reject a plan (sends back to planning with feedback)
+$REPO_ROOT/.clawdbot/scripts/reject-plan.sh <task-id> --reason "why"
+
+# Dispatch a fix (sends feedback to fixing agent)
+$REPO_ROOT/.clawdbot/scripts/dispatch-fix.sh --task-id <id> --feedback "what to fix"
 
 # Check agent status
 $REPO_ROOT/.clawdbot/scripts/check-agents.sh
 
-# Advance pipeline (run periodically or after agent completes)
+# Advance pipeline (run by cron every 2min — rarely need to run manually)
 $REPO_ROOT/.clawdbot/scripts/monitor.sh
 
 # Clean up merged worktrees
 $REPO_ROOT/.clawdbot/scripts/cleanup-worktrees.sh
 ```
+
+**Critical: `--user-request` is REQUIRED for every new task dispatch.** Without it, every subsequent pipeline phase (audit, test, fix, PR) loses the original user context. The pipeline warns but continues without it — don't rely on that fallback.
+
+**Critical: `--image-files` must be passed when the user shares screenshots.** Agents need visual context to implement UI changes correctly.
 
 ### When NOT to Use the Pipeline
 
@@ -288,9 +310,11 @@ $REPO_ROOT/.clawdbot/scripts/cleanup-worktrees.sh
 
 - ❌ Running `claude -p "investigate X"` directly — invisible to monitor, no Slack alerts, no dead-agent recovery
 - ❌ Using `sessions_spawn` for planning — not tracked in `active-tasks.json`
-- ❌ Spawning a planning agent and forgetting to register the task
-- ✅ Always: `spawn-agent.sh <task-id> <branch> claude <prompt.md> --phase planning --description "..." --product-goal "..."`
-- ✅ This creates the worktree, registers in active-tasks.json, spawns in tmux, and the monitor takes it from there
+- ❌ Dispatching without `--user-request` — every downstream phase loses the original user context
+- ❌ Dispatching without `--image-files` when user shared screenshots — agents can't see visual context
+- ❌ Using `spawn-agent.sh` directly for new tasks — bypasses template filling, context variables don't get substituted
+- ✅ Always: `dispatch.sh --task-id <id> --branch <branch> --agent claude --phase planning --description "..." --product-goal "..." --user-request "original message"`
+- ✅ This fills the prompt template with all context, creates the worktree, registers in active-tasks.json, spawns in tmux, and the monitor takes it from there
 
 ## Make It Yours
 

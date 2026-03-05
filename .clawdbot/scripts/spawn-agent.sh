@@ -229,7 +229,7 @@ try:
     entry = {
         'id': task_id,
         'branch': branch,
-        'agent': agent,
+        'agent': existing.get('agent', agent) if existing else agent,
         'tmuxSession': tmux_session,
         'status': 'running',
         'phase': phase,
