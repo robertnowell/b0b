@@ -644,7 +644,7 @@ def spawn_agent(task, phase, prompt_template, agent_override=None):
         'DIFF': plan_text,
         'TASK_ID': tid,
         'IMAGES': _images_text,
-        'USER_REQUEST': task.get('userRequest', ''),
+        'USER_REQUEST': task.get('userRequest', '') or 'No original request provided. Base your plan strictly on the task description and product goal. Do NOT add scope beyond what is explicitly described.',
     }
     for _k, _v in _vars.items():
         prompt_content = prompt_content.replace('{' + _k + '}', _v)
@@ -704,15 +704,26 @@ def spawn_agent(task, phase, prompt_template, agent_override=None):
     return True
 
 def auto_revert(task):
-    \"\"\"Revert a task's worktree branch to origin/main.\"\"\"
-    worktree = task.get('worktree', '')
-    if worktree and os.path.exists(worktree):
-        subprocess.run(['git', 'reset', '--hard', 'origin/main'], cwd=worktree, capture_output=True)
-        print(f'Reverted worktree for {task[\"id\"]}')
-
-    # Kill tmux session
+    \"\"\"Remove a task's worktree and branch for a completely clean restart.\"\"\"
     tmux = task.get('tmuxSession', f'agent-{task[\"id\"]}')
     subprocess.run(['tmux', 'kill-session', '-t', tmux], capture_output=True)
+
+    worktree = task.get('worktree', '')
+    branch = task.get('branch', '')
+    task_repo = get_task_repo(task)
+
+    if worktree and os.path.exists(worktree):
+        subprocess.run(['git', 'worktree', 'remove', '--force', worktree],
+                       capture_output=True, cwd=task_repo)
+
+    if branch:
+        subprocess.run(['git', 'branch', '-D', branch],
+                       capture_output=True, cwd=task_repo)
+        if not task.get('prNumber'):
+            subprocess.run(['git', 'push', 'origin', '--delete', branch],
+                           capture_output=True, cwd=task_repo)
+
+    print(f'Cleaned up worktree and branch for {task[\"id\"]}')
 
 def cleanup_dead_agent(task):
     \"\"\"Kill zombie tmux session and remove stale wrapper script.\"\"\"

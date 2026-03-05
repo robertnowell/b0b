@@ -834,5 +834,122 @@ class TestPrCreatingInvalidJson(unittest.TestCase):
         self.assertIn('no_pr_found', notifications[0][1])
 
 
+class TestAutoRevert(unittest.TestCase):
+    """Tests for auto_revert() — worktree + branch cleanup."""
+
+    def _auto_revert(self, task, subprocess_run, path_exists):
+        """Replicate auto_revert() logic from monitor.sh for unit testing."""
+        tmux = task.get('tmuxSession', f'agent-{task["id"]}')
+        subprocess_run(['tmux', 'kill-session', '-t', tmux], capture_output=True)
+
+        worktree = task.get('worktree', '')
+        branch = task.get('branch', '')
+        task_repo = '/fake/repo'
+
+        if worktree and path_exists(worktree):
+            subprocess_run(['git', 'worktree', 'remove', '--force', worktree],
+                           capture_output=True, cwd=task_repo)
+
+        if branch:
+            subprocess_run(['git', 'branch', '-D', branch],
+                           capture_output=True, cwd=task_repo)
+            if not task.get('prNumber'):
+                subprocess_run(['git', 'push', 'origin', '--delete', branch],
+                               capture_output=True, cwd=task_repo)
+
+    def test_removes_worktree_and_deletes_branches(self):
+        """auto_revert removes worktree, deletes local and remote branch."""
+        task = {
+            'id': 'task-1',
+            'branch': 'fix/something',
+            'worktree': '/worktrees/task-1',
+        }
+        mock_run = MagicMock()
+        mock_exists = MagicMock(return_value=True)
+
+        self._auto_revert(task, mock_run, mock_exists)
+
+        mock_run.assert_any_call(
+            ['tmux', 'kill-session', '-t', 'agent-task-1'], capture_output=True)
+        mock_run.assert_any_call(
+            ['git', 'worktree', 'remove', '--force', '/worktrees/task-1'],
+            capture_output=True, cwd='/fake/repo')
+        mock_run.assert_any_call(
+            ['git', 'branch', '-D', 'fix/something'],
+            capture_output=True, cwd='/fake/repo')
+        mock_run.assert_any_call(
+            ['git', 'push', 'origin', '--delete', 'fix/something'],
+            capture_output=True, cwd='/fake/repo')
+
+    def test_skips_remote_delete_when_pr_exists(self):
+        """auto_revert does NOT delete remote branch when task has a PR."""
+        task = {
+            'id': 'task-2',
+            'branch': 'fix/reviewed',
+            'worktree': '/worktrees/task-2',
+            'prNumber': 42,
+        }
+        mock_run = MagicMock()
+        mock_exists = MagicMock(return_value=True)
+
+        self._auto_revert(task, mock_run, mock_exists)
+
+        remote_delete_call = call(
+            ['git', 'push', 'origin', '--delete', 'fix/reviewed'],
+            capture_output=True, cwd='/fake/repo')
+        self.assertNotIn(remote_delete_call, mock_run.call_args_list)
+        mock_run.assert_any_call(
+            ['git', 'branch', '-D', 'fix/reviewed'],
+            capture_output=True, cwd='/fake/repo')
+
+    def test_skips_worktree_removal_when_not_exists(self):
+        """auto_revert skips worktree removal when directory doesn't exist."""
+        task = {
+            'id': 'task-3',
+            'branch': 'fix/gone',
+            'worktree': '/worktrees/task-3',
+        }
+        mock_run = MagicMock()
+        mock_exists = MagicMock(return_value=False)
+
+        self._auto_revert(task, mock_run, mock_exists)
+
+        worktree_remove_call = call(
+            ['git', 'worktree', 'remove', '--force', '/worktrees/task-3'],
+            capture_output=True, cwd='/fake/repo')
+        self.assertNotIn(worktree_remove_call, mock_run.call_args_list)
+        mock_run.assert_any_call(
+            ['git', 'branch', '-D', 'fix/gone'],
+            capture_output=True, cwd='/fake/repo')
+
+    def test_no_branch_no_worktree(self):
+        """auto_revert with minimal task only kills tmux."""
+        task = {'id': 'task-4'}
+        mock_run = MagicMock()
+        mock_exists = MagicMock(return_value=False)
+
+        self._auto_revert(task, mock_run, mock_exists)
+
+        self.assertEqual(mock_run.call_count, 1)
+        mock_run.assert_called_once_with(
+            ['tmux', 'kill-session', '-t', 'agent-task-4'], capture_output=True)
+
+    def test_custom_tmux_session(self):
+        """auto_revert uses custom tmuxSession if present."""
+        task = {
+            'id': 'task-5',
+            'tmuxSession': 'my-custom-session',
+            'branch': 'fix/custom',
+            'worktree': '/worktrees/task-5',
+        }
+        mock_run = MagicMock()
+        mock_exists = MagicMock(return_value=True)
+
+        self._auto_revert(task, mock_run, mock_exists)
+
+        mock_run.assert_any_call(
+            ['tmux', 'kill-session', '-t', 'my-custom-session'], capture_output=True)
+
+
 if __name__ == '__main__':
     unittest.main()

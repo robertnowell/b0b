@@ -57,8 +57,11 @@ Override with the `CLAWDBOT_STATE_DIR` environment variable.
   --branch feat/my-feature \
   --product-goal "Add widget support" \
   --description "Implement widget component with tests" \
+  --user-request "Original conversation context explaining why and how the user wants this done" \
   --agent claude \
   --phase planning
 ```
+
+`--user-request` provides the original conversation context shown to the planning agent as "Original Request." Without it, the agent investigates the codebase independently and may choose an approach the user didn't intend.
 
 The pipeline will advance the task through: planning → plan_review → implementing → auditing → fixing → testing → pr_creating → reviewing → pr_ready → merged.
