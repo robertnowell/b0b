@@ -9,11 +9,13 @@
 {IMAGES}
 
 ## Instructions
-1. Ensure all changes are committed
-2. Run `pnpm lint` and `pnpm build` in changed packages — fix any errors
-3. Push your branch
-4. Check if a PR already exists on this branch: `gh pr list --head <branch-name> --json number,url`
-   - **If a PR exists**: just push your changes — the existing PR updates automatically. Do NOT create a new PR. Skip to step 6.
+1. Run `git status` to see all changes in the worktree
+2. Stage ONLY files relevant to this task using `git add <specific-files>` (NOT `git add .`). If there are unrelated modified or untracked files, leave them unstaged — do not commit them.
+3. Commit with a clear message matching repo style
+4. Run `pnpm lint` and `pnpm build` in changed packages — fix any errors
+5. Push your branch
+6. Check if a PR already exists on this branch: `gh pr list --head <branch-name> --json number,url`
+   - **If a PR exists**: just push your changes — the existing PR updates automatically. Do NOT create a new PR. Skip to step 8.
    - **If no PR exists**: create one with `gh pr create` including:
    - Title: [Package] Brief description
    - Body with ALL sections below (mandatory):
@@ -55,5 +57,5 @@ Other flows to sanity-check that weren't broken by this change:
 (If UI changes — before/after)
 ```
 
-5. If you changed UI, capture screenshots and include them
-6. The Manual Testing section is MANDATORY — do not skip it. Think about how a human tester would verify this change.
+7. If you changed UI, capture screenshots and include them
+8. The Manual Testing section is MANDATORY — do not skip it. Think about how a human tester would verify this change.

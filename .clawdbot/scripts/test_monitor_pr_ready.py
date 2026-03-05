@@ -951,5 +951,98 @@ class TestAutoRevert(unittest.TestCase):
             ['tmux', 'kill-session', '-t', 'my-custom-session'], capture_output=True)
 
 
+class TestWorktreeCleanupBeforeSpawn(unittest.TestCase):
+    """spawn_agent() must clean dirty worktree state before spawning a new agent."""
+
+    @staticmethod
+    def _simulate_cleanup(worktree, phase, tid, subprocess_run, path_isdir):
+        """Replicate the worktree cleanup block from spawn_agent() in monitor.sh."""
+        cleaned_count = 0
+        if worktree and path_isdir(worktree):
+            dirty_check = subprocess_run(
+                ['git', 'status', '--porcelain'],
+                capture_output=True, text=True, cwd=worktree)
+            dirty_files = dirty_check.stdout.strip()
+            if dirty_files:
+                cleaned_count = len(dirty_files.splitlines())
+                subprocess_run(['git', 'checkout', '.'], capture_output=True, cwd=worktree)
+                subprocess_run(['git', 'clean', '-fd'], capture_output=True, cwd=worktree)
+        return cleaned_count
+
+    def _make_status_result(self, porcelain_output):
+        result = MagicMock()
+        result.returncode = 0
+        result.stdout = porcelain_output
+        return result
+
+    def test_dirty_worktree_triggers_checkout_and_clean(self):
+        """When worktree has uncommitted files, git checkout and clean are called."""
+        dirty_output = ' M brand-store.tsx\n M email-row.test.tsx\n?? plan.md'
+        calls = []
+        def mock_run(cmd, **kwargs):
+            calls.append((cmd, kwargs.get('cwd')))
+            return self._make_status_result(dirty_output)
+
+        count = self._simulate_cleanup(
+            '/worktrees/task-1', 'pr_creating', 'task-1',
+            mock_run, lambda p: True)
+
+        self.assertEqual(count, 3)
+        self.assertEqual(calls[0], (['git', 'status', '--porcelain'], '/worktrees/task-1'))
+        self.assertEqual(calls[1], (['git', 'checkout', '.'], '/worktrees/task-1'))
+        self.assertEqual(calls[2], (['git', 'clean', '-fd'], '/worktrees/task-1'))
+
+    def test_clean_worktree_skips_checkout_and_clean(self):
+        """When worktree is clean, only git status is called."""
+        calls = []
+        def mock_run(cmd, **kwargs):
+            calls.append(cmd)
+            return self._make_status_result('')
+
+        count = self._simulate_cleanup(
+            '/worktrees/task-1', 'auditing', 'task-1',
+            mock_run, lambda p: True)
+
+        self.assertEqual(count, 0)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0], ['git', 'status', '--porcelain'])
+
+    def test_missing_worktree_skips_cleanup(self):
+        """When worktree directory doesn't exist, no git commands are run."""
+        mock_run = MagicMock()
+
+        count = self._simulate_cleanup(
+            '/worktrees/task-1', 'testing', 'task-1',
+            mock_run, lambda p: False)
+
+        self.assertEqual(count, 0)
+        mock_run.assert_not_called()
+
+    def test_empty_worktree_path_skips_cleanup(self):
+        """When worktree path is empty string, no git commands are run."""
+        mock_run = MagicMock()
+
+        count = self._simulate_cleanup(
+            '', 'implementing', 'task-1',
+            mock_run, lambda p: True)
+
+        self.assertEqual(count, 0)
+        mock_run.assert_not_called()
+
+    def test_single_dirty_file_cleans(self):
+        """Even a single dirty file triggers cleanup."""
+        calls = []
+        def mock_run(cmd, **kwargs):
+            calls.append(cmd)
+            return self._make_status_result('?? plan.md')
+
+        count = self._simulate_cleanup(
+            '/worktrees/task-1', 'pr_creating', 'task-1',
+            mock_run, lambda p: True)
+
+        self.assertEqual(count, 1)
+        self.assertEqual(len(calls), 3)
+
+
 if __name__ == '__main__':
     unittest.main()

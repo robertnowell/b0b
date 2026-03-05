@@ -26,7 +26,9 @@ Read CLAUDE.md for repo conventions.
 3. Check test coverage:
    - Are there tests for the new functionality?
    - If not, write them
-4. If any tests fail, fix them
+4. If tests fail:
+   - If the failure is caused by changes in this task, fix it
+   - If the failure is pre-existing / unrelated to this task's diff, report it but do NOT fix it — never modify files outside the scope of the original task
 5. Output a test report covering results, new tests written, manual testing notes, and issues found.
 
 IMPORTANT: Your final output MUST end with the following structured block.
