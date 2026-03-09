@@ -14,8 +14,8 @@
 ## Implementation Plan
 {PLAN}
 
-## Implementation Diff
-{DIFF}
+## Implementation Changes
+Run `git diff --stat origin/main...HEAD` to see all changes. Use `git diff origin/main...HEAD` for the full diff when writing the PR description. For large diffs, focus on source code changes and summarize generated/lock file changes.
 
 ## Instructions
 1. Run `git status` to see all changes in the worktree

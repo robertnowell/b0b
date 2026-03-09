@@ -17,11 +17,11 @@ Read CLAUDE.md for repo conventions.
 
 {IMAGES}
 
-## Implementation Diff
-{DIFF}
+## Implementation Changes
+Run `git diff --stat origin/main...HEAD` to identify which packages and files were changed. Use `git diff origin/main...HEAD -- <file>` to inspect specific changes as needed.
 
 ## Your Task
-1. Identify which packages were changed (from the diff)
+1. Identify which packages were changed (run `git diff --stat origin/main...HEAD`)
 2. In each changed package, run:
    - `pnpm lint` — report any lint errors
    - `pnpm build` — report any build errors
