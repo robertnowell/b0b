@@ -6,8 +6,8 @@
 ## Implementation Plan
 {PLAN}
 
-## Implementation Diff
-{DIFF}
+## Implementation Changes
+Run `git diff --stat origin/main...HEAD` to see which files changed, then `git diff origin/main...HEAD -- <file>` to inspect specific files. Focus on source code changes — skip generated files, lock files, and snapshots.
 
 ## Original User Request
 {USER_REQUEST}
@@ -15,7 +15,7 @@
 {IMAGES}
 
 ## Your Task
-Audit this implementation against the PRD and plan. Compare the diff above to the plan.
+Audit this implementation against the PRD and plan. Compare the implementation changes to the plan.
 1. Does the implementation match the PRD requirements?
 2. Are all deliverables present?
 3. Any bugs, edge cases, or security issues?

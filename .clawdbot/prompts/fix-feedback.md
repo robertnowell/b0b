@@ -14,8 +14,8 @@
 ## Implementation Plan
 {PLAN}
 
-## Implementation Diff
-{DIFF}
+## Implementation Changes
+Run `git diff --stat origin/main...HEAD` to see the current state of changes. Use `git diff origin/main...HEAD -- <file>` to inspect specific files.
 
 ## Feedback to Address
 {FEEDBACK}

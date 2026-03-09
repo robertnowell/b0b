@@ -104,15 +104,8 @@ product_goal = task.get('productGoal', '')
 
 plan_text = task.get('planContent', '') or description
 
-# Compute diff from worktree (always separate from plan)
+# Skip diff computation — agents discover changes via git in the worktree
 diff_text = ''
-worktree = task.get('worktree', os.path.join(worktree_base, task_id))
-if worktree and os.path.isdir(worktree):
-    diff_result = subprocess.run(
-        ['git', 'diff', 'origin/main...HEAD'],
-        capture_output=True, text=True, cwd=worktree)
-    if diff_result.returncode == 0 and diff_result.stdout.strip():
-        diff_text = diff_result.stdout
 
 image_files = task.get('imageFiles', [])
 images_text = ''
@@ -147,10 +140,10 @@ _vars.update(overrides)
 _phase_required = {
     'planning':     ['PRODUCT_GOAL', 'TASK_DESCRIPTION', 'USER_REQUEST'],
     'implementing': ['PLAN', 'PRODUCT_GOAL', 'TASK_DESCRIPTION', 'USER_REQUEST'],
-    'auditing':     ['PLAN', 'DIFF', 'PRD', 'USER_REQUEST'],
-    'testing':      ['PLAN', 'DIFF', 'PRODUCT_GOAL', 'USER_REQUEST'],
-    'fixing':       ['PLAN', 'DIFF', 'FEEDBACK', 'PRODUCT_GOAL', 'USER_REQUEST'],
-    'pr_creating':  ['PLAN', 'DIFF', 'PRODUCT_GOAL', 'TASK_DESCRIPTION', 'USER_REQUEST'],
+    'auditing':     ['PLAN', 'PRD', 'USER_REQUEST'],
+    'testing':      ['PLAN', 'PRODUCT_GOAL', 'USER_REQUEST'],
+    'fixing':       ['PLAN', 'FEEDBACK', 'PRODUCT_GOAL', 'USER_REQUEST'],
+    'pr_creating':  ['PLAN', 'PRODUCT_GOAL', 'TASK_DESCRIPTION', 'USER_REQUEST'],
 }
 required = _phase_required.get(phase, [])
 fallback_prefix = 'No original request provided.'
@@ -170,6 +163,14 @@ for key, value in _vars.items():
 unresolved = re.findall(r'\{([A-Za-z_][A-Za-z0-9_]*)\}', content)
 for u in unresolved:
     print(f'WARNING: unresolved placeholder {{{u}}} in {template_file}', file=sys.stderr)
+
+# Safety net: warn if filled prompt exceeds safe threshold
+prompt_bytes = len(content.encode('utf-8'))
+MAX_PROMPT_BYTES = 300_000  # ~75K tokens, well under Claude's 200K limit
+if prompt_bytes > MAX_PROMPT_BYTES:
+    print(f'WARNING: Filled prompt for {task_id}/{phase} is {prompt_bytes / 1024:.0f}KB '
+          f'(limit: {MAX_PROMPT_BYTES / 1024:.0f}KB). Agent may fail with \"Prompt is too long\".',
+          file=sys.stderr)
 
 sys.stdout.write(content)
 " "$TASKS_FILE" "$LOCK_FILE" "$TASK_ID" "$PHASE" "$TEMPLATE" "$OVERRIDES_FILE" "$WORKTREE_BASE"

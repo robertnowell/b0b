@@ -215,7 +215,7 @@ When a skill exists for a task, **always read the SKILL.md and follow it**. Do n
 
 When someone sends an HTML file containing K&L Wine Merchants email content (look for "K&L Wine Merchants" in the title, `klwines.com` links, or buyer details like Subject/Preview Text/Pull Quote/Email Title):
 
-1. **Immediately react** to the triggering message with 🦀 (crab emoji) as an acknowledgement that you're on it
+1. **Immediately react** to the triggering message with 🍷 (wine glass emoji) as an acknowledgement that you're on it
 2. **ALWAYS** read and follow `/opt/homebrew/lib/node_modules/openclaw/skills/edit_email/SKILL.md`
 3. **ALWAYS** run the pipeline (`node tools/pipeline.js`) — never manually edit the HTML
 4. The pipeline handles: header/footer replacement, table colors, hero section, review formatting, single-SKU table removal, custom edits, and rubric validation
@@ -230,7 +230,7 @@ When someone sends an HTML file containing K&L Wine Merchants email content (loo
 
 When someone requests a post-pipeline edit (e.g. "remove the Jackson Kelly review", "reorder the wines", "move the product table above the reviews"):
 
-1. **React** with 🦀 to acknowledge
+1. **React** with 🍷 to acknowledge
 2. **Identify the target HTML** — resolve which edited file to tweak:
    - **Thread context**: if the request is in a thread under a pipeline run, use that run's output
    - **Explicit name**: if they mention a wine/email name (e.g. "tweak the patria email"), find it in `/Users/kopi/Projects/KL/edited/<name>/<name>.html`
