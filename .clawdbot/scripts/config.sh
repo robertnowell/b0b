@@ -14,7 +14,7 @@ LOCK_FILE="${STATE_DIR}/.tasks.lock"
 LOG_DIR="${STATE_DIR}/logs"
 PLANS_DIR="${STATE_DIR}/plans"
 
-WORKTREE_BASE="/Users/kopi/Projects/kopi-worktrees"
+WORKTREE_BASE="${WORKTREE_BASE:-${HOME}/Projects/kopi-worktrees}"
 
 MAX_RUNTIME_SECONDS="${MAX_RUNTIME_SECONDS:-2700}"
 PLANNING_TIMEOUT_SECONDS="${PLANNING_TIMEOUT_SECONDS:-1200}"   # 20 minutes
@@ -49,7 +49,7 @@ CODEX_PATH="${CODEX_PATH:-codex}"
 SLACK_BOT_TOKEN="${SLACK_BOT_TOKEN:-}"
 SLACK_PROJECT_CHANNEL="C0AJAR3S76U"    # #project-kopi-claw
 SLACK_ALERTS_CHANNEL="C0AHGH5FH42"     # #alerts-kopi-claw
-SLACK_REVIEW_USER="UXXXXXXXXXXXX"        # Robert — ping on plan_review
+SLACK_REVIEW_USER="UXXXXXXXXXXXX"        # reviewer — ping on plan_review
 
 # Read bot token from credentials file if env var not set
 if [ -z "${SLACK_BOT_TOKEN:-}" ] && [ -f "${HOME}/.openclaw/credentials/slack-bot-token" ]; then

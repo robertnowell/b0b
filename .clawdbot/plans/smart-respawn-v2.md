@@ -262,7 +262,7 @@ if cooldown:
 WORKTREE_DIR="${REPO_ROOT}/../kopi-worktrees/${TASK_ID}"
 
 # With: Always resolve to the canonical worktree base directory
-WORKTREE_BASE="/Users/kopi/Projects/kopi-worktrees"
+WORKTREE_BASE="~/Projects/kopi-worktrees"
 WORKTREE_DIR="${WORKTREE_BASE}/${TASK_ID}"
 ```
 

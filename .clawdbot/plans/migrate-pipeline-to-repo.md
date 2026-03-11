@@ -41,7 +41,7 @@ The only file with substantial changes. New logic:
 # Source this at the top of every pipeline script
 
 # Repo root — auto-detected from git (works in worktrees)
-REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo "/Users/kopi/Projects/kopi")"
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo "~/Projects/kopi")"
 
 # Pipeline infrastructure in the repo
 CLAWDBOT_DIR="${REPO_ROOT}/.clawdbot"
@@ -59,7 +59,7 @@ PLANS_DIR="${STATE_DIR}/plans"
 NOTIFY_OUTBOX="${STATE_DIR}/notify-outbox.jsonl"
 
 # Worktree bases (configurable via env vars)
-WORKTREE_BASE="${CLAWDBOT_WORKTREE_BASE:-/Users/kopi/Projects/kopi-worktrees}"
+WORKTREE_BASE="${CLAWDBOT_WORKTREE_BASE:-~/Projects/kopi-worktrees}"
 WORKSPACE_REPO="${CLAWDBOT_WORKSPACE_REPO:-${HOME}/.openclaw/workspace-kopiclaw}"
 WORKSPACE_WORKTREE_BASE="${CLAWDBOT_WORKSPACE_WORKTREE_BASE:-${HOME}/.openclaw/kopi-worktrees}"
 

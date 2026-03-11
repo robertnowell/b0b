@@ -70,7 +70,7 @@ Kopiclaw is an AI engineering orchestrator that manages the full lifecycle of so
 │           │                            │                       │
 │  ┌────────▼────────────────────────────▼──────────────────┐   │
 │  │              Git Worktrees                              │   │
-│  │  /Users/kopi/Projects/kopi-worktrees/{task-id}/         │   │
+│  │  ~/Projects/kopi-worktrees/{task-id}/         │   │
 │  │  One worktree per task, branched from origin/main       │   │
 │  └────────────────────────┬───────────────────────────────┘   │
 └───────────────────────────┼───────────────────────────────────┘
@@ -171,14 +171,14 @@ Agents communicate results via structured lines in their log output:
 
 ## 4. Pipeline Scripts
 
-All scripts live in `$REPO_ROOT/.clawdbot/scripts/` (committed to the Rendition repo). `$REPO_ROOT` is `/Users/kopi/Projects/kopi`.
+All scripts live in `$REPO_ROOT/.clawdbot/scripts/` (committed to the Rendition repo). `$REPO_ROOT` is `~/Projects/kopi`.
 
 ### config.sh
 Shared configuration sourced by every other script. Defines paths:
-- `REPO_ROOT` → `/Users/kopi/Projects/kopi` (git rev-parse)
+- `REPO_ROOT` → `~/Projects/kopi` (git rev-parse)
 - `CLAWDBOT_DIR` → `$REPO_ROOT/.clawdbot` (scripts + prompts, committed)
 - `STATE_DIR` → `~/.openclaw/workspace-kopiclaw/pipeline` (runtime state, not committed; override with `CLAWDBOT_STATE_DIR` env var)
-- `WORKTREE_BASE` → `/Users/kopi/Projects/kopi-worktrees`
+- `WORKTREE_BASE` → `~/Projects/kopi-worktrees`
 - `TASKS_FILE` → `$STATE_DIR/active-tasks.json`
 - `LOCK_FILE` → `$STATE_DIR/.tasks.lock`
 - `MAX_RUNTIME_SECONDS` → 2700 (45 min)
@@ -304,7 +304,7 @@ The central task registry. Lives at `~/.openclaw/workspace-kopiclaw/pipeline/act
   "maxIterations": 4,                  // max before auto-revert
   "startedAt": "2026-02-27T23:48:35Z", // UTC timestamp
   "completedAt": "2026-02-27T23:53:37Z", // set on completion
-  "worktree": "/Users/kopi/Projects/kopi-worktrees/ios-visibility-bug",
+  "worktree": "~/Projects/kopi-worktrees/ios-visibility-bug",
   "logFile": "...pipeline/logs/agent-ios-visibility-bug.log",
   "description": "iOS Safari tab backgrounding triggers false error toast",
   "productGoal": "Image generation survives tab backgrounding on iOS",
@@ -422,7 +422,7 @@ Some tasks use one-off prompt files (e.g., `ios-visibility-image-gen-bug.md`, `m
 
 ### Git Worktrees
 
-- **Base:** `/Users/kopi/Projects/kopi-worktrees/`
+- **Base:** `~/Projects/kopi-worktrees/`
 - **Convention:** One worktree per task, named by task-id
 - **Branch:** Created from `origin/main` (fetched before creation)
 - **Lifecycle:** Created by `spawn-agent.sh`, cleaned by `cleanup-worktrees.sh`
@@ -446,7 +446,7 @@ Some tasks use one-off prompt files (e.g., `ios-visibility-image-gen-bug.md`, `m
 
 ### Product Repo
 
-- **Path:** `/Users/kopi/Projects/kopi/`
+- **Path:** `~/Projects/kopi/`
 - **GitHub:** `tryrendition/Rendition`
 - **Stack:** pnpm monorepo + turbo (Next.js, Shopify, promotions, etc.)
 - **Deploy:** Vercel (web), GCP Cloud Run (services), GitHub Actions on merge to main
@@ -454,12 +454,12 @@ Some tasks use one-off prompt files (e.g., `ios-visibility-image-gen-bug.md`, `m
 ### Workspace Layout
 
 ```
-/Users/kopi/Projects/kopi/.clawdbot/    # Committed to repo
+~/Projects/kopi/.clawdbot/    # Committed to repo
 ├── scripts/                # All pipeline bash/python scripts
 ├── prompts/                # Standard prompt templates (plan.md, implement.md, etc.)
 └── README.md
 
-/Users/kopi/.openclaw/workspace-kopiclaw/   # Runtime state (not committed)
+~/.openclaw/workspace-kopiclaw/   # Runtime state (not committed)
 ├── AGENTS.md          # Session startup instructions
 ├── ARCHITECTURE.md    # This document
 ├── HEARTBEAT.md       # Periodic check configuration

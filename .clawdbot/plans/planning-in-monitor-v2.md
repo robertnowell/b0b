@@ -4,13 +4,13 @@
 
 ### Two divergent copies exist
 
-1. **Repo copy** (`/Users/kopi/Projects/kopi/.clawdbot/`):
+1. **Repo copy** (`~/Projects/kopi/.clawdbot/`):
    - Original scripts. config.sh resolves paths relative to repo root.
    - `active-tasks.json` has 5 tasks (newer tasks including `planning-in-monitor-v2`).
    - monitor.sh does NOT have planning phase support.
    - Was reverted from the repo in commit `99084ea90`.
 
-2. **Workspace copy** (`/Users/kopi/.openclaw/workspace-kopiclaw/scripts/`):
+2. **Workspace copy** (`~/.openclaw/workspace-kopiclaw/scripts/`):
    - More evolved. config.sh uses `WORKSPACE_ROOT`.
    - State lives at `workspace/.clawdbot/active-tasks.json` (2 older tasks).
    - Already has `planning` phase in monitor.sh, `plan.md` template, `get_plan_result()`.
@@ -36,7 +36,7 @@
 Single canonical location for all pipeline infra:
 
 ```
-/Users/kopi/.openclaw/workspace-kopiclaw/pipeline/
+~/.openclaw/workspace-kopiclaw/pipeline/
 ├── scripts/
 │   ├── config.sh
 │   ├── monitor.sh
@@ -88,7 +88,7 @@ planning → plan_review → implementing → auditing → [fixing ↔ auditing]
 ### Step 1: Create `pipeline/` directory structure
 
 ```bash
-mkdir -p /Users/kopi/.openclaw/workspace-kopiclaw/pipeline/{scripts,prompts,plans,logs}
+mkdir -p ~/.openclaw/workspace-kopiclaw/pipeline/{scripts,prompts,plans,logs}
 ```
 
 ### Step 2: Update `config.sh`
@@ -99,9 +99,9 @@ The single source of truth for all paths. Key changes:
 #!/usr/bin/env bash
 # config.sh — Shared configuration for agent pipeline scripts
 
-REPO_ROOT="/Users/kopi/Projects/kopi"
+REPO_ROOT="~/Projects/kopi"
 PIPELINE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-WORKTREE_BASE="/Users/kopi/Projects/kopi-worktrees"
+WORKTREE_BASE="~/Projects/kopi-worktrees"
 TASKS_FILE="${PIPELINE_DIR}/active-tasks.json"
 LOCK_FILE="${PIPELINE_DIR}/.tasks.lock"
 LOG_DIR="${PIPELINE_DIR}/logs"
@@ -674,13 +674,13 @@ Update `com.kopiclaw.monitor.plist` to point to new paths:
 <key>ProgramArguments</key>
 <array>
     <string>/bin/bash</string>
-    <string>/Users/kopi/.openclaw/workspace-kopiclaw/pipeline/scripts/monitor.sh</string>
+    <string>~/.openclaw/workspace-kopiclaw/pipeline/scripts/monitor.sh</string>
 </array>
 ...
 <key>StandardOutPath</key>
-<string>/Users/kopi/.openclaw/workspace-kopiclaw/pipeline/logs/launchd-monitor.log</string>
+<string>~/.openclaw/workspace-kopiclaw/pipeline/logs/launchd-monitor.log</string>
 <key>StandardErrorPath</key>
-<string>/Users/kopi/.openclaw/workspace-kopiclaw/pipeline/logs/launchd-monitor.log</string>
+<string>~/.openclaw/workspace-kopiclaw/pipeline/logs/launchd-monitor.log</string>
 ```
 
 Then:
@@ -703,14 +703,14 @@ Strategy:
 # One-time migration script
 import json
 
-repo_tasks = json.load(open('/Users/kopi/Projects/kopi/.clawdbot/active-tasks.json'))
-ws_tasks = json.load(open('/Users/kopi/.openclaw/workspace-kopiclaw/.clawdbot/active-tasks.json'))
+repo_tasks = json.load(open('~/Projects/kopi/.clawdbot/active-tasks.json'))
+ws_tasks = json.load(open('~/.openclaw/workspace-kopiclaw/.clawdbot/active-tasks.json'))
 
 repo_ids = {t['id'] for t in repo_tasks}
 merged = repo_tasks + [t for t in ws_tasks if t['id'] not in repo_ids]
 
 # Update logFile paths
-pipeline_log_dir = '/Users/kopi/.openclaw/workspace-kopiclaw/pipeline/logs'
+pipeline_log_dir = '~/.openclaw/workspace-kopiclaw/pipeline/logs'
 for t in merged:
     old_log = t.get('logFile', '')
     if old_log:
@@ -725,16 +725,16 @@ for t in merged:
     if 'requiresPlanReview' not in t:
         t['requiresPlanReview'] = True
 
-json.dump(merged, open('/Users/kopi/.openclaw/workspace-kopiclaw/pipeline/active-tasks.json', 'w'), indent=2)
+json.dump(merged, open('~/.openclaw/workspace-kopiclaw/pipeline/active-tasks.json', 'w'), indent=2)
 ```
 
 ### Step 13: Copy log files
 
 ```bash
 # Copy logs from both locations to pipeline/logs/
-cp /Users/kopi/Projects/kopi/.clawdbot/logs/* /Users/kopi/.openclaw/workspace-kopiclaw/pipeline/logs/ 2>/dev/null || true
-cp /Users/kopi/.openclaw/workspace-kopiclaw/.clawdbot/logs/agent-* /Users/kopi/.openclaw/workspace-kopiclaw/pipeline/logs/ 2>/dev/null || true
-cp /Users/kopi/.openclaw/workspace-kopiclaw/.clawdbot/logs/prompt-* /Users/kopi/.openclaw/workspace-kopiclaw/pipeline/logs/ 2>/dev/null || true
+cp ~/Projects/kopi/.clawdbot/logs/* ~/.openclaw/workspace-kopiclaw/pipeline/logs/ 2>/dev/null || true
+cp ~/.openclaw/workspace-kopiclaw/.clawdbot/logs/agent-* ~/.openclaw/workspace-kopiclaw/pipeline/logs/ 2>/dev/null || true
+cp ~/.openclaw/workspace-kopiclaw/.clawdbot/logs/prompt-* ~/.openclaw/workspace-kopiclaw/pipeline/logs/ 2>/dev/null || true
 ```
 
 ### Step 14: Update `plan.md` prompt template

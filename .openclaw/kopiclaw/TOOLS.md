@@ -1,7 +1,7 @@
 # TOOLS.md - Local Notes
 
 ## Kopi Repo
-- Path: `/Users/kopi/Projects/kopi`
+- Path: `~/Projects/kopi`
 - Monorepo: pnpm + turbo
 - Packages: assistant (Next.js), shopify-conjure, promotions, landing-pages, rendition-figma-plugin, blog, discord, doc-sync-engine, supabase
 - Deploy: Vercel (web), GCP Cloud Run (services), GitHub Actions on merge to main
@@ -9,7 +9,7 @@
 ## Coding Agents
 - Claude Code: `${CLAUDE_PATH:-claude}`
 - Codex: `codex`
-- Worktrees: `/Users/kopi/Projects/kopi-worktrees/`
+- Worktrees: `~/Projects/kopi-worktrees/`
 
 ## Agent Swarm Scripts
 

@@ -10,7 +10,7 @@ Commit `1c1c614ac` ("add agent pipeline scripts and prompts to .clawdbot") alrea
 - `README.md` created in `.clawdbot/`
 - `.gitignore` partially updated (has `.clawdbot/logs/` and `.clawdbot/.tasks.lock`)
 
-The workspace copies at `/Users/kopi/.openclaw/workspace-kopiclaw/pipeline/scripts/` and `pipeline/prompts/` still exist (old versions). All non-config scripts are byte-identical between workspace and repo.
+The workspace copies at `~/.openclaw/workspace-kopiclaw/pipeline/scripts/` and `pipeline/prompts/` still exist (old versions). All non-config scripts are byte-identical between workspace and repo.
 
 ## Remaining Work
 
@@ -38,11 +38,11 @@ Currently only `.clawdbot/logs/` and `.clawdbot/.tasks.lock` are present.
 
 Change ProgramArguments from:
 ```
-/Users/kopi/.openclaw/workspace-kopiclaw/pipeline/scripts/monitor.sh
+~/.openclaw/workspace-kopiclaw/pipeline/scripts/monitor.sh
 ```
 to:
 ```
-/Users/kopi/Projects/kopi/.clawdbot/scripts/monitor.sh
+~/Projects/kopi/.clawdbot/scripts/monitor.sh
 ```
 
 Then reload:
@@ -53,25 +53,25 @@ launchctl load ~/Library/LaunchAgents/com.kopiclaw.monitor.plist
 
 ### 3. Update OpenClaw cron jobs
 
-**File:** `/Users/kopi/.openclaw/cron/jobs.json`
+**File:** `~/.openclaw/cron/jobs.json`
 
 Two jobs need path updates:
 
-**gh-poll-kopiclaw** (line 20): References `/Users/kopi/.openclaw/workspace-kopiclaw/scripts/gh-poll.sh` (note: `scripts/` not `pipeline/scripts/` — this path doesn't even exist; the workspace has no `scripts/` at root). Update to:
+**gh-poll-kopiclaw** (line 20): References `~/.openclaw/workspace-kopiclaw/scripts/gh-poll.sh` (note: `scripts/` not `pipeline/scripts/` — this path doesn't even exist; the workspace has no `scripts/` at root). Update to:
 ```
-/Users/kopi/Projects/kopi/.clawdbot/scripts/gh-poll.sh
+~/Projects/kopi/.clawdbot/scripts/gh-poll.sh
 ```
 
-**monitor-pipeline** (line 50): Uses `cd /Users/kopi/.openclaw/workspace-kopiclaw && bash pipeline/scripts/check-agents.sh` and `pipeline/scripts/monitor.sh`. Update to use absolute paths to repo:
+**monitor-pipeline** (line 50): Uses `cd ~/.openclaw/workspace-kopiclaw && bash pipeline/scripts/check-agents.sh` and `pipeline/scripts/monitor.sh`. Update to use absolute paths to repo:
 ```
-/Users/kopi/Projects/kopi/.clawdbot/scripts/check-agents.sh
-/Users/kopi/Projects/kopi/.clawdbot/scripts/monitor.sh
+~/Projects/kopi/.clawdbot/scripts/check-agents.sh
+~/Projects/kopi/.clawdbot/scripts/monitor.sh
 ```
 The `cat pipeline/active-tasks.json` reference should use `CLAWDBOT_STATE_DIR` or the absolute path `~/.openclaw/workspace-kopiclaw/pipeline/active-tasks.json` (state stays in workspace).
 
 ### 4. Update workspace docs — AGENTS.md
 
-**File:** `/Users/kopi/.openclaw/workspace-kopiclaw/AGENTS.md`
+**File:** `~/.openclaw/workspace-kopiclaw/AGENTS.md`
 
 Update the "Quick Reference" section (lines 258-273) — script paths change from `pipeline/scripts/X.sh` to paths relative to repo or absolute:
 
@@ -95,7 +95,7 @@ Also update line 244 reference to `spawn-agent.sh`, `dispatch.sh`, `monitor.sh` 
 
 ### 5. Update workspace docs — TOOLS.md
 
-**File:** `/Users/kopi/.openclaw/workspace-kopiclaw/TOOLS.md`
+**File:** `~/.openclaw/workspace-kopiclaw/TOOLS.md`
 
 Lines 14-20 — update "Agent Swarm Scripts" section:
 
@@ -111,10 +111,10 @@ Lines 14-20 — update "Agent Swarm Scripts" section:
 
 ### 6. Update workspace docs — ARCHITECTURE.md
 
-**File:** `/Users/kopi/.openclaw/workspace-kopiclaw/ARCHITECTURE.md`
+**File:** `~/.openclaw/workspace-kopiclaw/ARCHITECTURE.md`
 
 Major updates needed:
-- **Line 174:** "All scripts live in `/Users/kopi/.openclaw/workspace-kopiclaw/pipeline/scripts/`" → "All scripts live in `$REPO_ROOT/.clawdbot/scripts/` (committed to the Rendition repo)"
+- **Line 174:** "All scripts live in `~/.openclaw/workspace-kopiclaw/pipeline/scripts/`" → "All scripts live in `$REPO_ROOT/.clawdbot/scripts/` (committed to the Rendition repo)"
 - **Section 4 (Pipeline Scripts):** Update config.sh description to reflect new `CLAWDBOT_DIR`/`STATE_DIR` split
 - **Section 5 (Data Model):** Clarify state files remain at `~/.openclaw/workspace-kopiclaw/pipeline/`
 - **Section 6 (Cron):** Update monitor cron to reference new paths
@@ -123,8 +123,8 @@ Major updates needed:
 
 ### 7. Remove workspace `pipeline/scripts/` and standard prompt templates
 
-**Directory:** `/Users/kopi/.openclaw/workspace-kopiclaw/pipeline/scripts/` (delete entirely)
-**Files:** Delete standard templates from `/Users/kopi/.openclaw/workspace-kopiclaw/pipeline/prompts/`:
+**Directory:** `~/.openclaw/workspace-kopiclaw/pipeline/scripts/` (delete entirely)
+**Files:** Delete standard templates from `~/.openclaw/workspace-kopiclaw/pipeline/prompts/`:
 - `audit.md`, `create-pr.md`, `fix-feedback.md`, `implement.md`, `plan.md`, `review-plan.md`, `test.md`
 
 Keep task-specific one-offs in `pipeline/prompts/`:
@@ -150,7 +150,7 @@ Verify first: grep all scripts for `PIPELINE_DIR` references. Currently only `co
 | `.gitignore` | Modify | Add 4 missing defensive gitignore entries for state files |
 | `.clawdbot/scripts/config.sh` | Modify | Remove `PIPELINE_DIR` legacy alias (line 19) |
 | `~/Library/LaunchAgents/com.kopiclaw.monitor.plist` | Modify | Update monitor.sh path to repo location |
-| `/Users/kopi/.openclaw/cron/jobs.json` | Modify | Update both cron jobs to use repo script paths |
+| `~/.openclaw/cron/jobs.json` | Modify | Update both cron jobs to use repo script paths |
 | `~/.openclaw/workspace-kopiclaw/AGENTS.md` | Modify | Update Quick Reference script paths |
 | `~/.openclaw/workspace-kopiclaw/TOOLS.md` | Modify | Update Agent Swarm Scripts paths |
 | `~/.openclaw/workspace-kopiclaw/ARCHITECTURE.md` | Modify | Update script/template locations throughout |

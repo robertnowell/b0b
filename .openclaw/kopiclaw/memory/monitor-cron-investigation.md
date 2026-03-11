@@ -23,4 +23,4 @@
 2. **Replace webhook-based notifications with OpenClaw message tool** — Instead of needing `SLACK_WEBHOOK_URL`, have monitor.sh output structured JSON and let the OpenClaw cron handler post to `#alerts-kopi-claw` (C0AHGH5FH42). This eliminates the webhook dependency entirely.
 3. **Alternative: Create a launchd plist** if you want system-level scheduling independent of OpenClaw
 4. **If keeping webhook approach**: Create `.clawdbot/.env` with `SLACK_WEBHOOK_URL=https://hooks.slack.com/...` and source it from config.sh
-5. **Quick test**: Run `cd /Users/kopi/Projects/kopi && .clawdbot/monitor.sh` manually to verify it works (will need active tasks in active-tasks.json)
+5. **Quick test**: Run `cd ~/Projects/kopi && .clawdbot/monitor.sh` manually to verify it works (will need active tasks in active-tasks.json)

@@ -233,12 +233,12 @@ When someone requests a post-pipeline edit (e.g. "remove the Jackson Kelly revie
 1. **React** with 🍷 to acknowledge
 2. **Identify the target HTML** — resolve which edited file to tweak:
    - **Thread context**: if the request is in a thread under a pipeline run, use that run's output
-   - **Explicit name**: if they mention a wine/email name (e.g. "tweak the patria email"), find it in `/Users/kopi/Projects/KL/edited/<name>/<name>.html`
-   - **Most recent**: if ambiguous, use the most recently modified file in `/Users/kopi/Projects/KL/edited/` (check with `ls -lt`)
+   - **Explicit name**: if they mention a wine/email name (e.g. "tweak the patria email"), find it in `~/Projects/KL/edited/<name>/<name>.html`
+   - **Most recent**: if ambiguous, use the most recently modified file in `~/Projects/KL/edited/` (check with `ls -lt`)
    - **Ask** if still unclear — don't guess
 3. **Run the tweak tool**:
    ```
-   cd /Users/kopi/Projects/KL && node tools/tweak.js --html edited/<name>/<name>.html --instructions "..."
+   cd ~/Projects/KL && node tools/tweak.js --html edited/<name>/<name>.html --instructions "..."
    ```
    The tool modifies the HTML in-place and appends a tweak record to the audit JSON.
 4. **Upload** the tweaked HTML back to the channel

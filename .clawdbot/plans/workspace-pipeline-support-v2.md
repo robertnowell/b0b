@@ -47,27 +47,27 @@ Every task entry has a `"repo"` field: `"product"` (default) or `"workspace"`. T
 ### Current behavior
 `config.sh` line 16:
 ```bash
-WORKSPACE_WORKTREE_BASE="/Users/kopi/.openclaw/kopi-worktrees"
+WORKSPACE_WORKTREE_BASE="~/.openclaw/kopi-worktrees"
 ```
 
 ### Target behavior
 ```bash
-WORKSPACE_WORKTREE_BASE="/Users/kopi/.openclaw/workspace-kopiclaw-worktrees"
+WORKSPACE_WORKTREE_BASE="~/.openclaw/workspace-kopiclaw-worktrees"
 ```
 
 ### Rationale
-The current path `/Users/kopi/.openclaw/kopi-worktrees` is ambiguous — it could be confused with product repo worktrees. The new path makes the relationship to the workspace repo explicit.
+The current path `~/.openclaw/kopi-worktrees` is ambiguous — it could be confused with product repo worktrees. The new path makes the relationship to the workspace repo explicit.
 
 ### Changes
 
 **`config.sh`** (line 16):
 - Update the constant:
   ```bash
-  WORKSPACE_WORKTREE_BASE="/Users/kopi/.openclaw/workspace-kopiclaw-worktrees"
+  WORKSPACE_WORKTREE_BASE="~/.openclaw/workspace-kopiclaw-worktrees"
   ```
 
 **Migration**: Any existing workspace worktrees under the old path will become orphaned. Before changing the path:
-1. Run `git -C /Users/kopi/.openclaw/workspace-kopiclaw worktree list` to check for active workspace worktrees.
+1. Run `git -C ~/.openclaw/workspace-kopiclaw worktree list` to check for active workspace worktrees.
 2. If any exist, either finish/remove them first, or do a one-time `git worktree move` for each.
 3. After confirming no active workspace worktrees exist, update the constant.
 

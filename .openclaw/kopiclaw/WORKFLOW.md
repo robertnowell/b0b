@@ -32,7 +32,7 @@ Pass `--agent codex` or `--agent claude` to `dispatch.sh`. The same agent type i
 
 ## Worktree Convention
 
-- Base: `/Users/kopi/Projects/kopi-worktrees/`
+- Base: `~/Projects/kopi-worktrees/`
 - Branch naming: `feat/<task-id>`, `fix/<task-id>`, `refactor/<task-id>`
 - One worktree per task, one tmux session per agent
 - Worktree name = task ID
