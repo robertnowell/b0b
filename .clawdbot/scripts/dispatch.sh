@@ -148,6 +148,7 @@ mkdir -p "$LOG_DIR"
   --var TASK_ID="$TASK_ID" \
   --var USER_REQUEST="$USER_REQUEST" \
   --var IMAGES="$IMAGES_TEXT" \
+  --var AGENT_COMMIT_BOUNDARY="origin/main" \
   > "$FILLED_PROMPT_FILE"
 
 # --- Spawn the agent ---

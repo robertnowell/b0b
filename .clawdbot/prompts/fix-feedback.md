@@ -15,7 +15,7 @@
 {PLAN}
 
 ## Implementation Changes
-Run `git diff --stat origin/main...HEAD` to see the current state of changes. Use `git diff origin/main...HEAD -- <file>` to inspect specific files.
+Run `git diff --stat {AGENT_COMMIT_BOUNDARY}...HEAD` to see the current state of changes. Use `git diff {AGENT_COMMIT_BOUNDARY}...HEAD -- <file>` to inspect specific files.
 
 ## Feedback to Address
 {FEEDBACK}

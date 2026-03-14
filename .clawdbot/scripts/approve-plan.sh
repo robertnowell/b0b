@@ -66,7 +66,39 @@ if [ ! -f "$PLAN_FILE" ]; then
 fi
 PLAN_CONTENT="$(cat "$PLAN_FILE")"
 
+# Record commit boundary — HEAD before implementing agent makes changes
+# Worktrees are created at ${WORKTREE_BASE}/${TASK_ID} by spawn-agent.sh
+WORKTREE_DIR="${WORKTREE_BASE}/${TASK_ID}"
+BOUNDARY_SHA=""
+if [ -d "$WORKTREE_DIR" ]; then
+  BOUNDARY_SHA=$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || echo "")
+fi
+
+# Persist boundary and planContent in task state BEFORE prompt generation,
+# so build-context-vars.sh can read firstAgentCommitBoundary from task state
+python3 -c "
+import json, sys, fcntl
+tasks_file, lock_file, task_id, plan_content, boundary_sha = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5]
+fd = open(lock_file, 'w')
+fcntl.flock(fd, fcntl.LOCK_EX)
+try:
+    with open(tasks_file) as f:
+        tasks = json.load(f)
+    for t in tasks:
+        if t['id'] == task_id:
+            t['planContent'] = plan_content
+            t['firstAgentCommitBoundary'] = boundary_sha
+            break
+    with open(tasks_file, 'w') as f:
+        json.dump(tasks, f, indent=2)
+        f.write('\n')
+finally:
+    fcntl.flock(fd, fcntl.LOCK_UN)
+    fd.close()
+" "$TASKS_FILE" "$LOCK_FILE" "$TASK_ID" "$PLAN_CONTENT" "$BOUNDARY_SHA"
+
 # Fill implementation prompt using centralized context builder
+# (reads firstAgentCommitBoundary from task state set above)
 BUILD_VARS="${SCRIPT_DIR}/build-context-vars.sh"
 TEMPLATE="${PROMPTS_DIR}/implement.md"
 FILLED_PROMPT="${LOG_DIR}/prompt-${TASK_ID}-implementing-$(date +%s).md"
@@ -79,27 +111,6 @@ SPAWN_ARGS=("$TASK_ID" "$BRANCH" "$AGENT" "$FILLED_PROMPT" ""
   --description "$DESCRIPTION"
   --product-goal "$PRODUCT_GOAL")
 "$SPAWN" "${SPAWN_ARGS[@]}"
-
-# Update task — carry planContent through
-python3 -c "
-import json, sys, fcntl
-tasks_file, lock_file, task_id, plan_content = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
-fd = open(lock_file, 'w')
-fcntl.flock(fd, fcntl.LOCK_EX)
-try:
-    with open(tasks_file) as f:
-        tasks = json.load(f)
-    for t in tasks:
-        if t['id'] == task_id:
-            t['planContent'] = plan_content
-            break
-    with open(tasks_file, 'w') as f:
-        json.dump(tasks, f, indent=2)
-        f.write('\n')
-finally:
-    fcntl.flock(fd, fcntl.LOCK_UN)
-    fd.close()
-" "$TASKS_FILE" "$LOCK_FILE" "$TASK_ID" "$PLAN_CONTENT"
 
 # Notify
 notify \

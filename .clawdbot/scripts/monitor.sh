@@ -558,13 +558,16 @@ def build_context_vars(task, phase):
 
     plan_text = task.get('planContent', '') or description
 
+    # Commit boundary: use stored SHA or fall back to origin/main
+    boundary = task.get('firstAgentCommitBoundary', '') or 'origin/main'
+
     # Compute diff from worktree (always separate from plan)
     diff_text = ''
     task_wb = get_task_worktree_base(task)
     worktree = task.get('worktree', os.path.join(task_wb, tid))
     if worktree and os.path.isdir(worktree):
         diff_result = subprocess.run(
-            ['git', 'diff', 'origin/main...HEAD'],
+            ['git', 'diff', f'{boundary}...HEAD'],
             capture_output=True, text=True, cwd=worktree)
         if diff_result.returncode == 0 and diff_result.stdout.strip():
             diff_text = diff_result.stdout
@@ -590,6 +593,7 @@ def build_context_vars(task, phase):
         'TASK_ID': tid,
         'IMAGES': images_text,
         'USER_REQUEST': user_request,
+        'AGENT_COMMIT_BOUNDARY': boundary,
     }
 
 def spawn_agent(task, phase, prompt_template, agent_override=None):
@@ -1499,6 +1503,17 @@ for task in tasks:
                 else:
                     # Auto-advance — no human gate
                     task['planContent'] = plan_content
+                    # Record commit boundary — HEAD before implementing agent makes changes
+                    _boundary_sha = ''
+                    _task_wb = get_task_worktree_base(task)
+                    _wt = task.get('worktree', os.path.join(_task_wb, tid))
+                    if _wt and os.path.isdir(_wt):
+                        _sha_result = subprocess.run(
+                            ['git', 'rev-parse', 'HEAD'],
+                            capture_output=True, text=True, cwd=_wt)
+                        if _sha_result.returncode == 0:
+                            _boundary_sha = _sha_result.stdout.strip()
+                    task['firstAgentCommitBoundary'] = _boundary_sha
                     _t_msg = log_transition(task, 'planning', 'implementing', verdict='ready',
                         plan_size=len(plan_content), prompt_template='implement.md')
                     run_notify(tid, 'implementing', _t_msg, product_goal,
@@ -1510,6 +1525,7 @@ for task in tasks:
                             'status': 'running',
                             'planContent': plan_content,
                             'planFile': plan_file,
+                            'firstAgentCommitBoundary': _boundary_sha,
                         })
                     else:
                         print(f'ERROR: spawn failed for {tid} during planning->implementing')

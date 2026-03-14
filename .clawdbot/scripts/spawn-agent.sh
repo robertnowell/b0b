@@ -224,6 +224,7 @@ try:
         source_comment_url = existing.get('sourceCommentUrl')
         conflict_fix_count = existing.get('conflictFixCount', 0)
         user_request = existing.get('userRequest', '') or user_request
+        first_agent_commit_boundary = existing.get('firstAgentCommitBoundary', '')
         tasks = [t for t in tasks if t.get('id') != task_id]
 
     entry = {
@@ -256,6 +257,8 @@ try:
     if parent_task_id:
         entry['parentTaskId'] = parent_task_id
     if existing:
+        if first_agent_commit_boundary:
+            entry['firstAgentCommitBoundary'] = first_agent_commit_boundary
         if source_number:
             entry['sourceNumber'] = source_number
         if pr_number is not None:

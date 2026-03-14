@@ -18,10 +18,10 @@ Read CLAUDE.md for repo conventions.
 {IMAGES}
 
 ## Implementation Changes
-Run `git diff --stat origin/main...HEAD` to identify which packages and files were changed. Use `git diff origin/main...HEAD -- <file>` to inspect specific changes as needed.
+Run `git diff --stat {AGENT_COMMIT_BOUNDARY}...HEAD` to identify which packages and files were changed. Use `git diff {AGENT_COMMIT_BOUNDARY}...HEAD -- <file>` to inspect specific changes as needed.
 
 ## Your Task
-1. Identify which packages were changed (run `git diff --stat origin/main...HEAD`)
+1. Identify which packages were changed (run `git diff --stat {AGENT_COMMIT_BOUNDARY}...HEAD`)
 2. In each changed package, run:
    - `pnpm lint` — report any lint errors
    - `pnpm build` — report any build errors

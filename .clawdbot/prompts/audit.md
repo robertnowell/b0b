@@ -7,7 +7,7 @@
 {PLAN}
 
 ## Implementation Changes
-Run `git diff --stat origin/main...HEAD` to see which files changed, then `git diff origin/main...HEAD -- <file>` to inspect specific files. Focus on source code changes — skip generated files, lock files, and snapshots.
+Run `git diff --stat {AGENT_COMMIT_BOUNDARY}...HEAD` to see which files changed, then `git diff {AGENT_COMMIT_BOUNDARY}...HEAD -- <file>` to inspect specific files. Focus on source code changes — skip generated files, lock files, and snapshots.
 
 ## Original User Request
 {USER_REQUEST}

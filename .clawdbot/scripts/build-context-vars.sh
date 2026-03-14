@@ -115,6 +115,8 @@ if image_files and isinstance(image_files, list):
 user_request = task.get('userRequest', '') or \
     'No original request provided. Base your plan strictly on the task description and product goal. Do NOT add scope beyond what is explicitly described.'
 
+boundary = task.get('firstAgentCommitBoundary', '') or 'origin/main'
+
 _vars = {
     'TASK_DESCRIPTION': description,
     'PRD': product_goal,
@@ -129,6 +131,7 @@ _vars = {
     'IMAGES': images_text,
     'USER_REQUEST': user_request,
     'FINDINGS': '',
+    'AGENT_COMMIT_BOUNDARY': boundary,
 }
 
 # Apply caller overrides (FEEDBACK, FINDINGS, etc.)
