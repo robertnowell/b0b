@@ -127,6 +127,7 @@ def simulate_pr_creating_success(
     notifications = []
     changes_made = 0
     dispatch_attempted = False
+    skipped_to_merged = False
 
     branch = task.get('branch', '')
     retry_count = int(task.get('missingPrRetryCount', 0))
@@ -138,6 +139,19 @@ def simulate_pr_creating_success(
             except json.JSONDecodeError:
                 prs = []
                 pr_lookup_reason = 'invalid_pr_list_json'
+            # Check for any merged PR first — takes priority
+            merged_pr = next((p for p in prs if str(p.get('state', '')).upper() == 'MERGED'), None)
+            if merged_pr:
+                pr_number = merged_pr.get('number')
+                updates = {
+                    'phase': 'merged',
+                    'status': 'merged',
+                    'prNumber': pr_number,
+                }
+                notifications.append(('merged', f'Done (branch already merged via PR #{pr_number}).'))
+                changes_made += 1
+                skipped_to_merged = True
+                return updates, notifications, changes_made, dispatch_attempted, skipped_to_merged
             if prs:
                 pr_number = prs[0].get('number')
             else:
@@ -188,7 +202,7 @@ def simulate_pr_creating_success(
             ))
 
     changes_made += 1
-    return updates, notifications, changes_made, dispatch_attempted
+    return updates, notifications, changes_made, dispatch_attempted, skipped_to_merged
 
 
 def should_skip_race_guard(phase, last_action, now):
@@ -313,7 +327,7 @@ class TestPrCreatingGate(unittest.TestCase):
         task = {'id': 'task-1', 'branch': 'feat/test', 'phase': 'pr_creating'}
         pr_result = self._make_result(stdout=json.dumps([{'number': 42}]))
 
-        updates, notifications, _, dispatch_attempted = simulate_pr_creating_success(
+        updates, notifications, _, dispatch_attempted, _ = simulate_pr_creating_success(
             task, pr_result
         )
 
@@ -334,7 +348,7 @@ class TestPrCreatingGate(unittest.TestCase):
         pr_result = self._make_result(stdout=json.dumps([]))
         dispatch_ok = self._make_result(rc=0)
 
-        updates, notifications, _, dispatch_attempted = simulate_pr_creating_success(
+        updates, notifications, _, dispatch_attempted, _ = simulate_pr_creating_success(
             task, pr_result, dispatch_fix_result=dispatch_ok
         )
 
@@ -353,7 +367,7 @@ class TestPrCreatingGate(unittest.TestCase):
         pr_result = self._make_result(rc=1, stdout='')
         dispatch_ok = self._make_result(rc=0)
 
-        updates, notifications, _, _ = simulate_pr_creating_success(
+        updates, notifications, _, _, _ = simulate_pr_creating_success(
             task, pr_result, dispatch_fix_result=dispatch_ok
         )
 
@@ -370,7 +384,7 @@ class TestPrCreatingGate(unittest.TestCase):
         }
         pr_result = self._make_result(stdout=json.dumps([]))
 
-        updates, notifications, _, dispatch_attempted = simulate_pr_creating_success(
+        updates, notifications, _, dispatch_attempted, _ = simulate_pr_creating_success(
             task, pr_result
         )
 
@@ -390,7 +404,7 @@ class TestPrCreatingGate(unittest.TestCase):
         pr_result = self._make_result(stdout=json.dumps([]))
         dispatch_fail = self._make_result(rc=1)
 
-        updates, notifications, _, dispatch_attempted = simulate_pr_creating_success(
+        updates, notifications, _, dispatch_attempted, _ = simulate_pr_creating_success(
             task, pr_result, dispatch_fix_result=dispatch_fail
         )
         self.assertTrue(dispatch_attempted)
@@ -399,7 +413,7 @@ class TestPrCreatingGate(unittest.TestCase):
 
         # Next unchanged cycle reaches the configured retry ceiling and escalates.
         next_task = {**task, **updates}
-        updates2, notifications2, _, dispatch_attempted2 = simulate_pr_creating_success(
+        updates2, notifications2, _, dispatch_attempted2, _ = simulate_pr_creating_success(
             next_task, pr_result, dispatch_fix_result=dispatch_fail
         )
         self.assertFalse(dispatch_attempted2)
@@ -685,7 +699,7 @@ class TestPrCreatingGuardCompatibility(unittest.TestCase):
         pr_result = self._make_result(rc=0, stdout='')
         dispatch_fail = self._make_result(rc=1, stdout='')
 
-        updates, notifications, _, dispatch_attempted = simulate_pr_creating_success(
+        updates, notifications, _, dispatch_attempted, _ = simulate_pr_creating_success(
             task, pr_result, dispatch_fix_result=dispatch_fail
         )
 
@@ -699,7 +713,7 @@ class TestPrCreatingGuardCompatibility(unittest.TestCase):
         pr_result = self._make_result(rc=0, stdout='')
         dispatch_ok = self._make_result(rc=0, stdout='')
 
-        updates, notifications, _, dispatch_attempted = simulate_pr_creating_success(
+        updates, notifications, _, dispatch_attempted, _ = simulate_pr_creating_success(
             task, pr_result, dispatch_fix_result=dispatch_ok
         )
 
@@ -824,7 +838,7 @@ class TestPrCreatingInvalidJson(unittest.TestCase):
         pr_result = self._make_result(rc=0, stdout='not valid json')
         dispatch_ok = self._make_result(rc=0)
 
-        updates, notifications, _, dispatch_attempted = simulate_pr_creating_success(
+        updates, notifications, _, dispatch_attempted, _ = simulate_pr_creating_success(
             task, pr_result, dispatch_fix_result=dispatch_ok
         )
 
@@ -1042,6 +1056,117 @@ class TestWorktreeCleanupBeforeSpawn(unittest.TestCase):
 
         self.assertEqual(count, 1)
         self.assertEqual(len(calls), 3)
+
+
+class TestMergedBranchGuardTesting(unittest.TestCase):
+    """Testing phase should skip pr_creating and go to merged when branch already has a merged PR."""
+
+    def _make_merge_check_result(self, merged_prs):
+        result = MagicMock()
+        result.returncode = 0
+        result.stdout = json.dumps(merged_prs)
+        return result
+
+    def test_testing_to_merged_when_branch_already_merged(self):
+        """When branch has a merged PR, testing should skip to merged."""
+        task = {'id': 'task-1', 'branch': 'feat/test', 'phase': 'testing',
+                'findings': ['Test #1: PASS']}
+        merge_check = self._make_merge_check_result([{'number': 99}])
+
+        # Simulate: test passed + branch already has merged PR
+        branch = task.get('branch', '')
+        already_merged_pr = None
+        if branch and merge_check.returncode == 0 and merge_check.stdout.strip():
+            merged_prs = json.loads(merge_check.stdout)
+            if merged_prs:
+                already_merged_pr = merged_prs[0].get('number')
+
+        self.assertEqual(already_merged_pr, 99)
+        # In monitor.sh, this would trigger: phase=merged, status=merged, prNumber=99
+
+    def test_testing_no_merged_pr_proceeds_to_pr_creating(self):
+        """When branch has no merged PR, testing should proceed normally to pr_creating."""
+        task = {'id': 'task-1', 'branch': 'feat/test', 'phase': 'testing'}
+        merge_check = self._make_merge_check_result([])
+
+        branch = task.get('branch', '')
+        already_merged_pr = None
+        if branch and merge_check.returncode == 0 and merge_check.stdout.strip():
+            merged_prs = json.loads(merge_check.stdout)
+            if merged_prs:
+                already_merged_pr = merged_prs[0].get('number')
+
+        self.assertIsNone(already_merged_pr)
+        # In monitor.sh, this would proceed to normal pr_creating path
+
+
+class TestMergedBranchGuardPrCreating(unittest.TestCase):
+    """pr_creating completion handler should detect merged PRs and skip to merged."""
+
+    def test_pr_creating_completion_with_merged_pr(self):
+        """When only PR on branch is already merged, should go to merged, not reviewing."""
+        task = {'id': 'task-1', 'branch': 'feat/test', 'phase': 'pr_creating',
+                'missingPrRetryCount': 0}
+        pr_list = MagicMock()
+        pr_list.returncode = 0
+        pr_list.stdout = json.dumps([{'number': 55, 'state': 'MERGED'}])
+
+        updates, notifications, _, _, skipped = simulate_pr_creating_success(
+            task, pr_list)
+
+        self.assertTrue(skipped, 'should detect merged PR and skip to merged')
+        self.assertEqual(updates['phase'], 'merged')
+        self.assertEqual(updates['status'], 'merged')
+        self.assertEqual(updates['prNumber'], 55)
+        self.assertEqual(notifications[0][0], 'merged')
+
+    def test_pr_creating_completion_with_open_pr(self):
+        """When PR on branch is open, should advance to reviewing normally."""
+        task = {'id': 'task-1', 'branch': 'feat/test', 'phase': 'pr_creating',
+                'missingPrRetryCount': 0}
+        pr_list = MagicMock()
+        pr_list.returncode = 0
+        pr_list.stdout = json.dumps([{'number': 55, 'state': 'OPEN'}])
+
+        updates, notifications, _, _, skipped = simulate_pr_creating_success(
+            task, pr_list)
+
+        self.assertFalse(skipped, 'open PR should not skip to merged')
+        self.assertEqual(updates['phase'], 'reviewing')
+        self.assertEqual(updates['prNumber'], 55)
+
+    def test_pr_creating_completion_with_no_state_field(self):
+        """When state field is missing (legacy), should advance to reviewing normally."""
+        task = {'id': 'task-1', 'branch': 'feat/test', 'phase': 'pr_creating',
+                'missingPrRetryCount': 0}
+        pr_list = MagicMock()
+        pr_list.returncode = 0
+        pr_list.stdout = json.dumps([{'number': 55}])
+
+        updates, notifications, _, _, skipped = simulate_pr_creating_success(
+            task, pr_list)
+
+        self.assertFalse(skipped, 'missing state should not skip to merged')
+        self.assertEqual(updates['phase'], 'reviewing')
+
+    def test_pr_creating_mixed_open_and_merged_detects_merged(self):
+        """When both open and merged PRs exist, should detect the merged one."""
+        task = {'id': 'task-1', 'branch': 'feat/test', 'phase': 'pr_creating',
+                'missingPrRetryCount': 0}
+        pr_list = MagicMock()
+        pr_list.returncode = 0
+        # Open PR listed first, merged PR second — must still detect merged
+        pr_list.stdout = json.dumps([
+            {'number': 60, 'state': 'OPEN'},
+            {'number': 55, 'state': 'MERGED'},
+        ])
+
+        updates, notifications, _, _, skipped = simulate_pr_creating_success(
+            task, pr_list)
+
+        self.assertTrue(skipped, 'should detect merged PR even when open PR is listed first')
+        self.assertEqual(updates['phase'], 'merged')
+        self.assertEqual(updates['prNumber'], 55)
 
 
 if __name__ == '__main__':

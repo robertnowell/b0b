@@ -1664,20 +1664,42 @@ for task in tasks:
             new_findings = task.get('findings', []) + [_tf_entry]
 
             if test_result == 'pass':
-                # Advance to PR creation
-                _t_msg = log_transition(task, 'testing', 'pr_creating', verdict='pass',
-                    structured_findings=test_findings, prompt_template='create-pr.md')
-                run_notify(tid, 'pr_creating', _t_msg, product_goal, 'Creating pull request')
-                ok = spawn_agent(task, 'pr_creating', 'create-pr.md', task.get('agent'))
-                if ok:
-                    apply_updates(tid, {
-                        'phase': 'pr_creating',
-                        'status': 'running',
-                        'findings': new_findings,
-                    })
+                # Guard: check if branch already has a merged PR (prevents duplicate PR creation)
+                branch = task.get('branch', '')
+                already_merged_pr = None
+                if branch:
+                    _merge_check = subprocess.run(
+                        ['gh', 'pr', 'list', '--head', branch, '--state', 'merged',
+                         '--json', 'number', '--limit', '1'],
+                        capture_output=True, text=True, cwd=get_task_repo(task))
+                    if _merge_check.returncode == 0 and _merge_check.stdout.strip():
+                        try:
+                            _merged_prs = json.loads(_merge_check.stdout)
+                        except json.JSONDecodeError:
+                            _merged_prs = []
+                        if _merged_prs:
+                            already_merged_pr = _merged_prs[0].get('number')
+                if already_merged_pr:
+                    apply_updates(tid, {'phase': 'merged', 'status': 'merged',
+                        'prNumber': already_merged_pr, 'findings': new_findings})
+                    _t_msg = log_transition(task, 'testing', 'merged', verdict='pass',
+                        extra={'pr_number': already_merged_pr, 'reason': 'branch_already_merged'})
+                    run_notify(tid, 'merged', _t_msg, product_goal, 'Done (branch already merged)')
                 else:
-                    print(f'ERROR: spawn failed for {tid} during testing->pr_creating')
-                    run_notify(tid, phase, f'Failed to spawn PR creation agent', product_goal)
+                    # Advance to PR creation
+                    _t_msg = log_transition(task, 'testing', 'pr_creating', verdict='pass',
+                        structured_findings=test_findings, prompt_template='create-pr.md')
+                    run_notify(tid, 'pr_creating', _t_msg, product_goal, 'Creating pull request')
+                    ok = spawn_agent(task, 'pr_creating', 'create-pr.md', task.get('agent'))
+                    if ok:
+                        apply_updates(tid, {
+                            'phase': 'pr_creating',
+                            'status': 'running',
+                            'findings': new_findings,
+                        })
+                    else:
+                        print(f'ERROR: spawn failed for {tid} during testing->pr_creating')
+                        run_notify(tid, phase, f'Failed to spawn PR creation agent', product_goal)
             else:
                 # Send back for fixes
                 iteration += 1
@@ -1778,7 +1800,8 @@ for task in tasks:
             if not pr_number:
                 if branch:
                     pr_result = subprocess.run(
-                        ['gh', 'pr', 'list', '--head', branch, '--state', 'all', '--json', 'number', '--limit', '1'],
+                        ['gh', 'pr', 'list', '--head', branch, '--state', 'all',
+                         '--json', 'number,state', '--limit', '10'],
                         capture_output=True, text=True, cwd=task_repo)
                     if pr_result.returncode == 0 and pr_result.stdout.strip():
                         try:
@@ -1786,6 +1809,20 @@ for task in tasks:
                         except json.JSONDecodeError:
                             prs = []
                             pr_lookup_reason = 'invalid_pr_list_json'
+                        # Check for any merged PR first — takes priority
+                        merged_pr = next((p for p in prs if str(p.get('state', '')).upper() == 'MERGED'), None)
+                        if merged_pr:
+                            pr_number = merged_pr.get('number')
+                            # Branch already has a merged PR — skip to merged
+                            apply_updates(tid, {'phase': 'merged', 'status': 'merged',
+                                'prNumber': pr_number})
+                            _t_msg = log_transition(task, 'pr_creating', 'merged',
+                                verdict='pass',
+                                extra={'pr_number': pr_number, 'reason': 'branch_already_merged'})
+                            run_notify(tid, 'merged', _t_msg, product_goal,
+                                'Done (branch already merged)')
+                            changes_made += 1
+                            continue
                         if prs:
                             pr_number = prs[0].get('number')
                         else:

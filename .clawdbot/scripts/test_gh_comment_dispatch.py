@@ -338,6 +338,110 @@ class TestGhCommentDispatch(unittest.TestCase):
         dispatch_out = self.dispatch_log.read_text(encoding="utf-8")
         self.assertIn("--require-plan-review false", dispatch_out)
 
+    # --- Merged / closed PR branch guard ---
+
+    def test_merged_pr_generates_new_branch(self):
+        """When source PR is merged, dispatch should use a fresh branch, not the merged PR's branch."""
+        # Override gh stub: first PR state check fails (empty), second check returns merged info
+        write_exec(
+            self.gh_stub,
+            '#!/usr/bin/env bash\n'
+            'if [[ "$*" == *"pulls/"*"--jq"* ]]; then\n'
+            '  if [[ "$*" == *".head.ref"* ]]; then\n'
+            '    echo "feat/old-branch 42 closed true"\n'
+            '  else\n'
+            '    echo ""\n'  # First check fails silently
+            '  fi\n'
+            'elif [[ "$*" == *"issues/"*"--jq"* ]]; then\n'
+            '  echo "open"\n'
+            'elif [[ "$*" == *"reactions"* ]]; then\n'
+            '  exit 0\n'
+            'elif [[ "$1" == "issue" && "$2" == "comment" ]]; then\n'
+            '  exit 0\n'
+            'elif [[ "$1" == "api" && "$*" == *"replies"* ]]; then\n'
+            '  exit 0\n'
+            'else\n'
+            '  exit 0\n'
+            'fi\n',
+        )
+        comment = make_comment(800, 42, "someone", "@kopi-claw fix tests")
+        result = self.run_dispatch(comment + "\n")
+
+        self.assertTrue(self.dispatch_log.exists(),
+                        "dispatch should still proceed for merged PR")
+        dispatch_out = self.dispatch_log.read_text(encoding="utf-8")
+        self.assertNotIn("feat/old-branch", dispatch_out,
+                         "should NOT reuse the merged PR's branch")
+        self.assertIn("already merged", result.stdout)
+
+    def test_merged_pr_branch_collision_gets_unique_suffix(self):
+        """When merged PR branch matches what generate_branch would produce, a unique suffix is added."""
+        # generate_branch("42", " fix tests") produces feat/gh-42-fix-tests
+        # (leading space from @kopi-claw removal means prefix stays "feat")
+        write_exec(
+            self.gh_stub,
+            '#!/usr/bin/env bash\n'
+            'if [[ "$*" == *"pulls/"*"--jq"* ]]; then\n'
+            '  if [[ "$*" == *".head.ref"* ]]; then\n'
+            '    echo "feat/gh-42-fix-tests 42 closed true"\n'
+            '  else\n'
+            '    echo ""\n'
+            '  fi\n'
+            'elif [[ "$*" == *"issues/"*"--jq"* ]]; then\n'
+            '  echo "open"\n'
+            'elif [[ "$*" == *"reactions"* ]]; then\n'
+            '  exit 0\n'
+            'elif [[ "$1" == "issue" && "$2" == "comment" ]]; then\n'
+            '  exit 0\n'
+            'elif [[ "$1" == "api" && "$*" == *"replies"* ]]; then\n'
+            '  exit 0\n'
+            'else\n'
+            '  exit 0\n'
+            'fi\n',
+        )
+        comment = make_comment(802, 42, "someone", "@kopi-claw fix tests")
+        result = self.run_dispatch(comment + "\n")
+
+        self.assertTrue(self.dispatch_log.exists(),
+                        "dispatch should still proceed for merged PR")
+        dispatch_out = self.dispatch_log.read_text(encoding="utf-8")
+        # The branch should NOT be the exact merged branch name
+        self.assertNotIn("--branch feat/gh-42-fix-tests\n", dispatch_out,
+                         "should NOT reuse the exact merged branch name")
+        # It should have a -v suffix to avoid collision
+        self.assertIn("collided with merged PR branch", result.stdout)
+
+    def test_closed_pr_skips_dispatch(self):
+        """When source PR is closed (not merged), dispatch should skip entirely."""
+        # Override gh stub: first PR state check fails (empty), second check returns closed info
+        write_exec(
+            self.gh_stub,
+            '#!/usr/bin/env bash\n'
+            'if [[ "$*" == *"pulls/"*"--jq"* ]]; then\n'
+            '  if [[ "$*" == *".head.ref"* ]]; then\n'
+            '    echo "feat/old-branch 42 closed false"\n'
+            '  else\n'
+            '    echo ""\n'  # First check fails silently
+            '  fi\n'
+            'elif [[ "$*" == *"issues/"*"--jq"* ]]; then\n'
+            '  echo "open"\n'
+            'elif [[ "$*" == *"reactions"* ]]; then\n'
+            '  exit 0\n'
+            'elif [[ "$1" == "issue" && "$2" == "comment" ]]; then\n'
+            '  exit 0\n'
+            'elif [[ "$1" == "api" && "$*" == *"replies"* ]]; then\n'
+            '  exit 0\n'
+            'else\n'
+            '  exit 0\n'
+            'fi\n',
+        )
+        comment = make_comment(801, 42, "someone", "@kopi-claw fix tests")
+        result = self.run_dispatch(comment + "\n")
+
+        self.assertFalse(self.dispatch_log.exists(),
+                         "should NOT dispatch for a closed (not merged) PR")
+        self.assertIn("closed (not merged)", result.stdout)
+
     # --- Malformed input handling ---
 
     def test_malformed_comment_payload_is_skipped(self):

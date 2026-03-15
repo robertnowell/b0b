@@ -23,8 +23,13 @@ Run `git diff --stat {AGENT_COMMIT_BOUNDARY}...HEAD` to see all changes. Use `gi
 3. Commit with a clear message matching repo style
 4. Run `pnpm lint` and `pnpm build` in changed packages — fix any errors
 5. Push your branch
-6. Check if a PR already exists on this branch: `gh pr list --head <branch-name> --json number,url`
-   - **If a PR exists**: just push your changes — the existing PR updates automatically. Do NOT create a new PR. Skip to step 8.
+6. **Pre-flight merge check**: Before creating a PR, verify the branch hasn't already been merged:
+   ```
+   gh pr list --head <branch-name> --state merged --json number,url
+   ```
+   - **If a merged PR exists**: STOP. Do not create a new PR. The work has already been merged. Output "PR already merged" and exit successfully.
+7. Check if a PR already exists on this branch: `gh pr list --head <branch-name> --json number,url`
+   - **If a PR exists**: just push your changes — the existing PR updates automatically. Do NOT create a new PR. Skip to step 9.
    - **If no PR exists**: create one with `gh pr create` including:
    - Title: [Package] Brief description
    - Body with ALL sections below (mandatory):
@@ -66,5 +71,5 @@ Other flows to sanity-check that weren't broken by this change:
 (If UI changes — before/after)
 ```
 
-7. If you changed UI, capture screenshots and include them
-8. The Manual Testing section is MANDATORY — do not skip it. Think about how a human tester would verify this change.
+8. If you changed UI, capture screenshots and include them
+9. The Manual Testing section is MANDATORY — do not skip it. Think about how a human tester would verify this change.

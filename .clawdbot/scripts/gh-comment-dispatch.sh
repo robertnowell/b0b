@@ -591,12 +591,27 @@ print(task.get('phase', '') if task else '')
   # --- Check if this is an existing PR (not created by pipeline) ---
   existing_pr_branch=""
   existing_pr_number=""
+  merged_pr_branch=""
   if [ "$number" != "unknown" ]; then
-    pr_info=$(gh api "repos/${REPO}/pulls/${number}" --jq '.head.ref + " " + (.number | tostring)' 2>/dev/null) || pr_info=""
+    pr_info=$(gh api "repos/${REPO}/pulls/${number}" \
+      --jq '.head.ref + " " + (.number | tostring) + " " + .state + " " + (.merged | tostring)' \
+      2>/dev/null) || pr_info=""
     if [ -n "$pr_info" ]; then
       existing_pr_branch=$(echo "$pr_info" | awk '{print $1}')
       existing_pr_number=$(echo "$pr_info" | awk '{print $2}')
-      echo "Existing PR #${existing_pr_number} found on branch ${existing_pr_branch} — will update instead of creating new PR"
+      existing_pr_state=$(echo "$pr_info" | awk '{print $3}')
+      existing_pr_merged=$(echo "$pr_info" | awk '{print $4}')
+      if [ "$existing_pr_state" = "closed" ] && [ "$existing_pr_merged" = "true" ]; then
+        echo "PR #${existing_pr_number} is already merged — generating new branch instead of reusing ${existing_pr_branch}"
+        merged_pr_branch="$existing_pr_branch"
+        existing_pr_branch=""
+        existing_pr_number=""
+      elif [ "$existing_pr_state" = "closed" ]; then
+        echo "PR #${existing_pr_number} is closed (not merged) — skipping"
+        continue
+      else
+        echo "Existing open PR #${existing_pr_number} found on branch ${existing_pr_branch} — will update instead of creating new PR"
+      fi
     fi
   fi
 
@@ -609,6 +624,13 @@ print(task.get('phase', '') if task else '')
   # --- Dispatch task ---
   task_id=$(generate_task_id "$number" "$task_desc")
   branch="${existing_pr_branch:-$(generate_branch "$number" "$task_desc")}"
+
+  # If the generated branch matches the already-merged PR's branch, force a unique name
+  if [ -n "$merged_pr_branch" ] && [ "$branch" = "$merged_pr_branch" ]; then
+    branch="${branch}-v$(date +%s)"
+    echo "Branch name collided with merged PR branch — using ${branch} instead"
+  fi
+
   agent="${GH_COMMENT_DEFAULT_AGENT:-claude}"
 
   echo "Dispatching: task=${task_id} branch=${branch} agent=${agent} planOnly=${require_review}"
