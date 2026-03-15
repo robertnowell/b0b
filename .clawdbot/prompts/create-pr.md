@@ -17,6 +17,8 @@
 ## Implementation Changes
 Run `git diff --stat {AGENT_COMMIT_BOUNDARY}...HEAD` to see all changes. Use `git diff {AGENT_COMMIT_BOUNDARY}...HEAD` for the full diff when writing the PR description. For large diffs, focus on source code changes and summarize generated/lock file changes.
 
+**Note:** This branch may contain pre-existing commits from other developers. Focus the PR description on changes made by this pipeline task, not pre-existing work.
+
 ## Instructions
 1. Run `git status` to see all changes in the worktree
 2. Stage ONLY files relevant to this task using `git add <specific-files>` (NOT `git add .`). If there are unrelated modified or untracked files, leave them unstaged — do not commit them.
