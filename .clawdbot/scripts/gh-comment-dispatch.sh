@@ -303,12 +303,38 @@ is_known_bot() {
   return 1
 }
 
+MAX_QUEUE_RETRIES="${GH_COMMENT_MAX_QUEUE_RETRIES:-3}"
+
 enqueue_comment() {
   local line="$1"
-  local comment_id
+  local comment_id retry_count
   comment_id=$(echo "$line" | python3 -c "import json,sys; print(json.load(sys.stdin)['commentId'])") || return 1
+  retry_count=$(echo "$line" | python3 -c "import json,sys; print(json.load(sys.stdin).get('_retryCount',0))") || retry_count=0
 
-  touch "$QUEUE_FILE"
+  # Check retry limit
+  if [ "$retry_count" -ge "$MAX_QUEUE_RETRIES" ]; then
+    echo "ERROR: Comment ${comment_id} exceeded max retries (${MAX_QUEUE_RETRIES}) — giving up"
+    local number author
+    number=$(echo "$line" | python3 -c "import json,sys; print(json.load(sys.stdin).get('number','unknown'))")
+    author=$(echo "$line" | python3 -c "import json,sys; print(json.load(sys.stdin).get('author','unknown'))")
+    notify --task-id "gh-${number}" --phase "failed" \
+      --message "Dispatch permanently failed for #${number} (${author}) after ${MAX_QUEUE_RETRIES} retries" \
+      --product-goal "GitHub comment dispatch"
+    return 1
+  fi
+
+  # Bump retry count
+  line=$(echo "$line" | python3 -c "
+import json, sys
+obj = json.load(sys.stdin)
+obj['_retryCount'] = obj.get('_retryCount', 0) + 1
+print(json.dumps(obj))
+")
+
+  # Write to NEXT_QUEUE_FILE when set (survives end-of-cycle cleanup),
+  # otherwise fall back to QUEUE_FILE
+  local target="${NEXT_QUEUE_FILE:-$QUEUE_FILE}"
+  touch "$target"
   if python3 -c "
 import json, sys
 comment_id = sys.argv[1]
@@ -326,11 +352,11 @@ with open(queue_file) as f:
         except Exception:
             continue
 sys.exit(0 if found else 1)
-" "$comment_id" "$QUEUE_FILE"; then
+" "$comment_id" "$target"; then
     return 0
   fi
 
-  echo "$line" >> "$QUEUE_FILE"
+  echo "$line" >> "$target"
 }
 
 # --- Main ---
@@ -646,6 +672,12 @@ print(task.get('phase', '') if task else '')
     --user-request "$body" \
     --image-files "$image_paths" || {
     echo "ERROR: dispatch.sh failed for task ${task_id}"
+    enqueue_comment "$line"
+    notify --task-id "$task_id" --phase "failed" \
+      --message "Dispatch failed for #${number}: worktree/branch conflict" \
+      --product-goal "$task_desc"
+    gh_reply "$number" "$comment_id" "$comment_type" "Dispatch failed — will retry next cycle."
+    add_reaction "$comment_id" "$comment_type" "warning"
     continue
   }
 

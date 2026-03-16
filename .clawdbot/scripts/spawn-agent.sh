@@ -101,8 +101,19 @@ fi
 
 if [ ! -d "$WORKTREE_DIR" ]; then
   git worktree add "$WORKTREE_DIR" -b "$BRANCH" "$BASE_REF" 2>/dev/null || \
-  git worktree add "$WORKTREE_DIR" "$BRANCH" 2>/dev/null || \
-  { echo "ERROR: Failed to create worktree"; exit 1; }
+  git worktree add "$WORKTREE_DIR" "$BRANCH" 2>/dev/null || {
+    # Branch may be checked out in a stale worktree — try to clean it up
+    conflicting_wt=$(git worktree list --porcelain | grep -B2 "^branch refs/heads/${BRANCH}$" | head -1 | sed 's/worktree //')
+    if [ -n "$conflicting_wt" ] && [ "$conflicting_wt" != "$WORKTREE_DIR" ]; then
+      echo "Branch $BRANCH already checked out at $conflicting_wt — removing stale worktree"
+      git worktree remove --force "$conflicting_wt" 2>/dev/null || true
+      git worktree add "$WORKTREE_DIR" -b "$BRANCH" "$BASE_REF" 2>/dev/null || \
+      git worktree add "$WORKTREE_DIR" "$BRANCH" 2>/dev/null || \
+      { echo "ERROR: Failed to create worktree even after cleanup"; exit 1; }
+    else
+      echo "ERROR: Failed to create worktree"; exit 1
+    fi
+  }
 fi
 
 # Ensure plan.md is gitignored in worktree so planning artifacts don't pollute git status

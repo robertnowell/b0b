@@ -20,17 +20,25 @@ This branch may contain commits from human developers that pre-date this pipelin
 {IMAGES}
 
 ## Your Task
-Audit this implementation against the PRD and plan. Compare the implementation changes to the plan.
+Audit this implementation against the PRD, plan, and **Original User Request**. Compare the implementation changes to the plan.
+
+### Scope Rule (CRITICAL)
+Your audit must ONLY flag issues that are **within the scope of the Original User Request**. If you find bugs, gaps, or improvements in touched files that are unrelated to what the user asked for, do NOT flag them as critical or as failures. Instead, collect them in a separate **"Out of Scope Observations"** section at the end of your assessment — these will be added as PR comments for future consideration, but they must NOT affect your AUDIT_VERDICT.
+
+### Checklist
 1. Does the implementation match the PRD requirements?
 2. Are all deliverables present?
-3. Any bugs, edge cases, or security issues?
-4. Are tests adequate?
+3. Any bugs, edge cases, or security issues **within scope of the user request**?
+4. Are tests adequate for the **requested changes**?
 5. Does it follow repo conventions (see CLAUDE.md)?
-6. Are there any changes outside the plan's scope that were introduced by the agent? (Pre-existing human commits are NOT in scope — ignore them.)
+6. **Scope creep check:** Does the implementation include changes *introduced by the agent* that go beyond the Original User Request? Flag any out-of-scope modifications the agent added — these should be reverted or split into a separate task. **IMPORTANT:** Do NOT flag pre-existing commits that were already on the branch before the agent started working. To distinguish, run `git log --oneline origin/main..HEAD` and note that commits made before the agent's session are pre-existing and must not be touched.
 
 Run `pnpm lint` and `pnpm build` in changed packages.
 
-Output a structured assessment covering issues found, missing deliverables, and suggested fixes.
+Output a structured assessment covering in-scope issues found, missing deliverables, and suggested fixes.
+
+### Out of Scope Observations
+List any issues you found in touched files that are NOT related to the Original User Request. These are informational only and must NOT affect your verdict.
 
 IMPORTANT: Your final output MUST end with the following structured block.
 Every field is required — use 0 for counts and "none" for empty lists.

@@ -75,3 +75,15 @@ Other flows to sanity-check that weren't broken by this change:
 
 8. If you changed UI, capture screenshots and include them
 9. The Manual Testing section is MANDATORY — do not skip it. Think about how a human tester would verify this change.
+10. **Out-of-scope observations:** Check the audit feedback for any "Out of Scope Observations" section. If present, add a separate PR comment (not in the PR body) listing these observations so they can be tracked as future work. Format as:
+
+```
+## 🔭 Out of Scope Observations (from audit)
+
+The following issues were found during audit but are outside the scope of this PR's task. Consider addressing them separately:
+
+- **[brief title]**: [description]
+- ...
+```
+
+Post this as a comment on the PR using `gh pr comment <number> --body "..."` after creating/updating the PR.

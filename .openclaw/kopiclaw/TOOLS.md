@@ -3,7 +3,8 @@
 ## Kopi Repo
 - Path: `/Users/kopi/Projects/kopi`
 - Monorepo: pnpm + turbo
-- Packages: assistant (Next.js), shopify-conjure, promotions, landing-pages, rendition-figma-plugin, blog, discord, doc-sync-engine, supabase
+- Packages: promotions (Next.js — primary app, all code/app changes go here), shopify-conjure, landing-pages, rendition-figma-plugin, blog, discord, doc-sync-engine, supabase
+- **Deprecated:** `assistant` — legacy Next.js app, do NOT make changes here. All work happens in `promotions`.
 - Deploy: Vercel (web), GCP Cloud Run (services), GitHub Actions on merge to main
 
 ## Coding Agents

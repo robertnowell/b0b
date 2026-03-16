@@ -218,7 +218,7 @@ When someone sends an HTML file containing K&L Wine Merchants email content (loo
 1. **Immediately react** to the triggering message with 🍷 (wine glass emoji) as an acknowledgement that you're on it
 2. **ALWAYS** read and follow `/opt/homebrew/lib/node_modules/openclaw/skills/edit_email/SKILL.md`
 3. **ALWAYS** run the pipeline (`node tools/pipeline.js`) — never manually edit the HTML
-4. The pipeline handles: header/footer replacement, table colors, hero section, review formatting, single-SKU table removal, custom edits, and rubric validation
+4. The pipeline handles (in order): ReplaceHeader, UpdatePreheader, FixTableColor, CleanProductTable, RemoveTableSingleSku, AddHero, FormatReviews, AddPurchaseButton, PreArrivalDisclaimer, CustomEdit, ReplaceFooter
 5. Upload **both** the edited HTML and audit JSON back to the channel
 6. Include a per-action status summary (✅/❌ for each step)
 
