@@ -1,24 +1,29 @@
 # Fix Review Feedback
 
-## Original Task
+## Feedback to Address
+{FEEDBACK}
+
+## Instructions — Read This Before Doing Anything
+**You MUST address the feedback above. Do NOT skip it.** Read the feedback, investigate the issue it describes, and make code changes to fix it. If you believe the existing code already handles it, explain exactly why with evidence (file paths, line numbers, test output). Simply declaring "already done" is not acceptable.
+
+## Context
+
+### Original Task
 {TASK_DESCRIPTION}
 
-## Product Goal
+### Product Goal
 {PRODUCT_GOAL}
 
-## Original User Request
+### Original User Request
 {USER_REQUEST}
 
 {IMAGES}
 
-## Implementation Plan
+### Implementation Plan
 {PLAN}
 
-## Implementation Changes
+### Implementation Changes
 Run `git diff --stat {AGENT_COMMIT_BOUNDARY}...HEAD` to see the current state of changes. Use `git diff {AGENT_COMMIT_BOUNDARY}...HEAD -- <file>` to inspect specific files.
-
-## Feedback to Address
-{FEEDBACK}
 
 ## Instructions
 1. Read each piece of feedback carefully

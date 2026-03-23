@@ -586,13 +586,43 @@ print(task.get('phase', '') if task else '')
     FIXABLE_PHASES="reviewing pr_ready"
     if echo "$FIXABLE_PHASES" | grep -qw "$task_phase"; then
       if [ "$dispatch_count" -lt "$MAX_DISPATCHES_PER_CYCLE" ]; then
+        # Classify feedback: tweak (direct fix) or rethink (re-plan needed)
+        CLASSIFY="${SCRIPT_DIR}/classify-fix.py"
         DISPATCH_FIX="${SCRIPT_DIR}/dispatch-fix.sh"
-        "$DISPATCH_FIX" \
-          --task-id "$existing_task" \
-          --feedback "GitHub comment from ${author} on #${number}: ${body}" || {
-          echo "WARNING: dispatch-fix.sh failed for ${existing_task}"
-        }
-        gh_reply "$number" "$comment_id" "$comment_type" "Feedback applied to existing task \`${existing_task}\` — fix agent dispatched."
+        DISPATCH_REPLAN="${SCRIPT_DIR}/dispatch-replan.sh"
+        feedback_text="GitHub comment from ${author} on #${number}: ${body}"
+
+        task_description=$(python3 -c "
+import json, sys
+tasks = json.load(open(sys.argv[1]))
+task = next((t for t in tasks if t.get('id') == sys.argv[2]), None)
+print(task.get('description', '') if task else '')
+" "$TASKS_FILE" "$existing_task" 2>/dev/null) || task_description=""
+
+        classify_result=$(printf '{"feedback": %s, "taskDescription": %s}' \
+          "$(echo "$feedback_text" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')" \
+          "$(echo "$task_description" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')" \
+          | python3 "$CLASSIFY" 2>/dev/null) || classify_result='{"route":"rethink","reason":"classification failed"}'
+
+        fix_route=$(echo "$classify_result" | python3 -c "import json,sys; print(json.load(sys.stdin).get('route','rethink'))")
+        fix_reason=$(echo "$classify_result" | python3 -c "import json,sys; print(json.load(sys.stdin).get('reason',''))")
+        echo "Classified feedback for ${existing_task}: ${fix_route} — ${fix_reason}"
+
+        if [ "$fix_route" = "rethink" ]; then
+          "$DISPATCH_REPLAN" \
+            --task-id "$existing_task" \
+            --feedback "$feedback_text" || {
+            echo "WARNING: dispatch-replan.sh failed for ${existing_task}"
+          }
+          gh_reply "$number" "$comment_id" "$comment_type" "Feedback requires rethinking the approach — re-planning task \`${existing_task}\`. Will post updated plan here."
+        else
+          "$DISPATCH_FIX" \
+            --task-id "$existing_task" \
+            --feedback "$feedback_text" || {
+            echo "WARNING: dispatch-fix.sh failed for ${existing_task}"
+          }
+          gh_reply "$number" "$comment_id" "$comment_type" "Feedback applied to existing task \`${existing_task}\` — fix agent dispatched."
+        fi
         add_reaction "$comment_id" "$comment_type" "rocket"
         dispatch_count=$((dispatch_count + 1))
       else

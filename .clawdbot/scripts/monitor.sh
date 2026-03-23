@@ -1476,6 +1476,17 @@ for task in tasks:
             # Check plan output and decide: plan_review gate or auto-advance
             plan_status, plan_summary, plan_content, plan_file = get_plan_result(task)
             if plan_status == 'ready':
+                # Post plan as GH comment on existing PR (for re-plan visibility)
+                pr_num = task.get('prNumber')
+                if pr_num and plan_content:
+                    plan_body = f'## Updated Plan\n\n{plan_content[:3800]}'
+                    if len(plan_content) > 3800:
+                        plan_body += '\n\n_(truncated)_'
+                    plan_body += '\n\n---\n*Posted by Kopiclaw pipeline*'
+                    subprocess.run(
+                        ['gh', 'issue', 'comment', str(pr_num), '--repo', 'tryrendition/Rendition', '--body', plan_body],
+                        capture_output=True, text=True, cwd=repo_root, env=_clean_env)
+
                 requires_review = task.get('requiresPlanReview', False)
                 if requires_review:
                     # Human gate — park in plan_review
@@ -1742,12 +1753,36 @@ for task in tasks:
             # Route back based on fixTarget
             fix_target = task.get('fixTarget', 'auditing')
             if fix_target == 'reviewing':
+                # Check if the fix agent actually pushed commits
+                worktree = task.get('worktree', '')
+                has_new_commits = False
+                if worktree:
+                    diff_result = subprocess.run(
+                        ['git', 'diff', '--name-only', 'origin/main...HEAD'],
+                        capture_output=True, text=True, cwd=worktree, env=_clean_env)
+                    # Check if there are unpushed commits vs what was there before
+                    log_result = subprocess.run(
+                        ['git', 'log', '--oneline', '-1', '--format=%H'],
+                        capture_output=True, text=True, cwd=worktree, env=_clean_env)
+                    prev_head = task.get('lastKnownHead', '')
+                    current_head = log_result.stdout.strip()
+                    has_new_commits = bool(current_head and current_head != prev_head)
+
+                if not has_new_commits:
+                    # Fix agent completed without pushing commits — flag for review
+                    print(f'WARNING: Fix agent for {tid} completed with no new commits — flagging for review')
+                    apply_updates(tid, {'phase': 'pr_ready', 'status': 'needs_review',
+                        'findings': task.get('findings', []) + ['Fix agent completed with zero commits — needs manual review']})
+                    run_notify(tid, 'pr_ready', f'⚠️ Fix agent completed with NO new commits for `{tid}`. Agent may have misread the feedback. <@U020AAXG1DE> Needs manual review.', product_goal)
+                    changes_made += 1
+                    continue
+
                 # Post-PR feedback fix: go back to reviewing to re-check CI
                 apply_updates(tid, {'phase': 'reviewing', 'status': 'reviewing'})
                 _t_msg = log_transition(task, 'fixing', 'reviewing',
                     extra={'fix_target': 'reviewing'})
                 run_notify(tid, 'reviewing', _t_msg, product_goal, 'Awaiting CI re-check')
-                # Post feedback-addressed comment on the PR
+                # Post feedback-addressed comment on the PR (only when commits were actually pushed)
                 pr_num = task.get('prNumber')
                 feedback = task.get('lastFeedback', '')
                 if pr_num and feedback:
