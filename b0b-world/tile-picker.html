@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Tile Picker — Donarg Office 32x32</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0a0a0f; color: #e4e4e7; font-family: 'SF Mono', 'JetBrains Mono', monospace; padding: 16px; }
+  h1 { font-size: 16px; margin-bottom: 4px; color: #f59e0b; }
+  p.info { font-size: 11px; color: #71717a; margin-bottom: 16px; }
+  .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+  .tab { padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.03); }
+  .tab.active { background: rgba(245,158,11,0.15); border-color: #f59e0b; color: #f59e0b; }
+  .grid { display: flex; flex-wrap: wrap; gap: 1px; background: #1a1a2e; padding: 1px; border-radius: 4px; }
+  .tile { position: relative; cursor: pointer; border: 2px solid transparent; transition: border-color 0.1s; }
+  .tile:hover { border-color: #f59e0b; z-index: 2; }
+  .tile.selected { border-color: #22c55e; }
+  .tile canvas { display: block; image-rendering: pixelated; }
+  .tile .id { position: absolute; bottom: 0; right: 0; font-size: 7px; color: rgba(255,255,255,0.4); background: rgba(0,0,0,0.7); padding: 0 2px; pointer-events: none; }
+  .tile .id-top { position: absolute; top: 0; left: 0; font-size: 7px; color: rgba(255,255,255,0.3); background: rgba(0,0,0,0.5); padding: 0 2px; pointer-events: none; }
+  #selected-info { position: fixed; bottom: 16px; left: 16px; right: 16px; background: rgba(0,0,0,0.9); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; padding: 12px 16px; font-size: 12px; display: flex; gap: 16px; align-items: center; z-index: 10; }
+  #selected-info canvas { image-rendering: pixelated; border: 1px solid #333; }
+  #selected-info .details { flex: 1; }
+  #selected-info .label { color: #f59e0b; font-weight: 600; }
+  #palette { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+  #palette .swatch { width: 48px; height: 48px; position: relative; cursor: pointer; border: 2px solid transparent; border-radius: 4px; }
+  #palette .swatch:hover { border-color: #f59e0b; }
+  #palette .swatch canvas { display: block; image-rendering: pixelated; border-radius: 2px; }
+  #palette .swatch .sid { position: absolute; bottom: -12px; left: 50%; transform: translateX(-50%); font-size: 8px; color: #71717a; white-space: nowrap; }
+  .row-label { width: 100%; font-size: 10px; color: #a78bfa; padding: 8px 0 4px; font-weight: 600; }
+  #map-preview { margin-top: 16px; }
+  #map-preview canvas { image-rendering: pixelated; border: 1px solid #333; cursor: pointer; }
+  .section { margin-top: 24px; }
+  .section h2 { font-size: 14px; color: #a78bfa; margin-bottom: 8px; }
+</style>
+</head>
+<body>
+
+<h1>Tile Picker — Donarg Office (512×1024, 32×32)</h1>
+<p class="info">Click tiles to add to palette. Hover for ID. Click palette swatch to select for painting.</p>
+
+<div class="tabs">
+  <div class="tab active" onclick="showTab('donarg')">Donarg (512 tiles)</div>
+  <div class="tab" onclick="showTab('masalimov')">Masalimov (28 tiles)</div>
+  <div class="tab" onclick="showTab('map')">Map Editor</div>
+</div>
+
+<div id="donarg-panel">
+  <div class="grid" id="donarg-grid"></div>
+</div>
+
+<div id="masalimov-panel" style="display:none">
+  <div class="grid" id="masalimov-grid"></div>
+</div>
+
+<div id="map-panel" style="display:none">
+  <div class="section">
+    <h2>Selected Palette</h2>
+    <div id="palette"></div>
+  </div>
+  <div class="section">
+    <h2>Map (click to paint, right-click to erase)</h2>
+    <p class="info">20×13 grid. Current brush shown in bottom bar. Exports JS array for office-tilemap.js.</p>
+    <div id="map-preview"></div>
+    <button onclick="exportMap()" style="margin-top:8px;padding:6px 12px;background:#22c55e;color:#000;border:none;border-radius:4px;cursor:pointer;font-family:inherit;font-weight:600;">Export Map JS</button>
+    <button onclick="clearMap()" style="margin-top:8px;padding:6px 12px;background:#ef4444;color:#fff;border:none;border-radius:4px;cursor:pointer;font-family:inherit;font-weight:600;margin-left:8px;">Clear</button>
+    <pre id="export-output" style="margin-top:8px;font-size:10px;color:#71717a;max-height:200px;overflow:auto;background:#111;padding:8px;border-radius:4px;display:none;"></pre>
+  </div>
+</div>
+
+<div id="selected-info" style="display:none">
+  <canvas id="sel-preview" width="96" height="96"></canvas>
+  <div class="details">
+    <div class="label" id="sel-label">Tile 0</div>
+    <div id="sel-pos" style="font-size:10px;color:#71717a;margin-top:2px;">Row 0, Col 0</div>
+  </div>
+  <button onclick="addToPalette()" style="padding:6px 12px;background:#f59e0b;color:#000;border:none;border-radius:4px;cursor:pointer;font-family:inherit;font-weight:600;">Add to Palette</button>
+</div>
+
+<script>
+const SCALE = 3; // Display scale for tile grid
+const MAP_SCALE = 2; // Display scale for map editor
+const MAP_W = 20, MAP_H = 13;
+const TILE = 32;
+
+let currentSheet = 'donarg';
+let selectedTile = null;
+let selectedSource = null;
+let palette = []; // [{id, source, texture}]
+let currentBrush = null;
+let mapData = Array.from({length: MAP_W}, () => Array.from({length: MAP_H}, () => ({id: -1, source: null})));
+
+// Donarg
+const donargImg = new Image();
+donargImg.src = "donarg-office-32.png";
+const DONARG_COLS = 16, DONARG_ROWS = 32;
+
+// Masalimov
+const masImg = new Image();
+masImg.src = "masalimov-tiles.png";
+const MAS_COLS = 7, MAS_ROWS = 4;
+
+function showTab(name) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  event.target.classList.add('active');
+  document.getElementById('donarg-panel').style.display = name === 'donarg' ? '' : 'none';
+  document.getElementById('masalimov-panel').style.display = name === 'masalimov' ? '' : 'none';
+  document.getElementById('map-panel').style.display = name === 'map' ? '' : 'none';
+  if (name === 'map') renderMap();
+}
+
+function buildGrid(img, containerId, cols, rows, source) {
+  img.onload = () => {
+    const container = document.getElementById(containerId);
+    container.innerHTML = '';
+    for (let r = 0; r < rows; r++) {
+      // Row label
+      const rl = document.createElement('div');
+      rl.className = 'row-label';
+      rl.textContent = `Row ${r} (tiles ${r*cols}–${r*cols+cols-1})`;
+      container.appendChild(rl);
+
+      for (let c = 0; c < cols; c++) {
+        const id = c + r * cols;
+        const div = document.createElement('div');
+        div.className = 'tile';
+        div.title = `ID: ${id} (row ${r}, col ${c})`;
+
+        const canvas = document.createElement('canvas');
+        canvas.width = TILE * SCALE;
+        canvas.height = TILE * SCALE;
+        const ctx = canvas.getContext('2d');
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(img, c * TILE, r * TILE, TILE, TILE, 0, 0, TILE * SCALE, TILE * SCALE);
+
+        // Check if tile has content
+        const checkCtx = document.createElement('canvas').getContext('2d');
+        checkCtx.canvas.width = TILE; checkCtx.canvas.height = TILE;
+        checkCtx.drawImage(img, c * TILE, r * TILE, TILE, TILE, 0, 0, TILE, TILE);
+        const data = checkCtx.getImageData(0, 0, TILE, TILE).data;
+        let hasContent = false;
+        for (let i = 3; i < data.length; i += 4) { if (data[i] > 10) { hasContent = true; break; } }
+
+        if (!hasContent) {
+          canvas.style.opacity = '0.15';
+        }
+
+        div.appendChild(canvas);
+
+        const idLabel = document.createElement('span');
+        idLabel.className = 'id';
+        idLabel.textContent = id;
+        div.appendChild(idLabel);
+
+        const posLabel = document.createElement('span');
+        posLabel.className = 'id-top';
+        posLabel.textContent = `${c},${r}`;
+        div.appendChild(posLabel);
+
+        div.onclick = () => selectTile(id, r, c, img, source);
+        container.appendChild(div);
+      }
+    }
+  };
+}
+
+function selectTile(id, row, col, img, source) {
+  selectedTile = {id, row, col, img, source};
+  const info = document.getElementById('selected-info');
+  info.style.display = 'flex';
+  document.getElementById('sel-label').textContent = `${source} Tile ${id}`;
+  document.getElementById('sel-pos').textContent = `Row ${row}, Col ${col} — use as: ${source}[${id}]`;
+
+  const canvas = document.getElementById('sel-preview');
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+  ctx.clearRect(0, 0, 96, 96);
+  ctx.drawImage(img, col * TILE, row * TILE, TILE, TILE, 0, 0, 96, 96);
+}
+
+function addToPalette() {
+  if (!selectedTile) return;
+  const {id, source} = selectedTile;
+  if (!palette.find(p => p.id === id && p.source === source)) {
+    palette.push({...selectedTile});
+    renderPalette();
+  }
+}
+
+function renderPalette() {
+  const container = document.getElementById('palette');
+  container.innerHTML = '';
+  palette.forEach((p, idx) => {
+    const swatch = document.createElement('div');
+    swatch.className = 'swatch';
+    if (currentBrush && currentBrush.id === p.id && currentBrush.source === p.source) {
+      swatch.style.borderColor = '#22c55e';
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = 48; canvas.height = 48;
+    const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(p.img, p.col * TILE, p.row * TILE, TILE, TILE, 0, 0, 48, 48);
+    swatch.appendChild(canvas);
+
+    const sid = document.createElement('span');
+    sid.className = 'sid';
+    sid.textContent = `${p.source[0]}${p.id}`;
+    swatch.appendChild(sid);
+
+    swatch.onclick = () => { currentBrush = p; renderPalette(); };
+    swatch.oncontextmenu = (e) => { e.preventDefault(); palette.splice(idx, 1); renderPalette(); };
+    container.appendChild(swatch);
+  });
+}
+
+// ── Map Editor ──
+function renderMap() {
+  let container = document.getElementById('map-preview');
+  container.innerHTML = '';
+  const canvas = document.createElement('canvas');
+  canvas.width = MAP_W * TILE * MAP_SCALE;
+  canvas.height = MAP_H * TILE * MAP_SCALE;
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+
+  // Dark floor base
+  ctx.fillStyle = '#111219';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Grid
+  ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+  ctx.lineWidth = 1;
+  for (let x = 0; x <= MAP_W; x++) { ctx.beginPath(); ctx.moveTo(x*TILE*MAP_SCALE, 0); ctx.lineTo(x*TILE*MAP_SCALE, canvas.height); ctx.stroke(); }
+  for (let y = 0; y <= MAP_H; y++) { ctx.beginPath(); ctx.moveTo(0, y*TILE*MAP_SCALE); ctx.lineTo(canvas.width, y*TILE*MAP_SCALE); ctx.stroke(); }
+
+  // Draw placed tiles
+  for (let x = 0; x < MAP_W; x++) {
+    for (let y = 0; y < MAP_H; y++) {
+      const cell = mapData[x][y];
+      if (cell.id >= 0 && cell.img) {
+        const p = palette.find(p => p.id === cell.id && p.source === cell.source);
+        if (p) {
+          ctx.drawImage(p.img, p.col * TILE, p.row * TILE, TILE, TILE, x*TILE*MAP_SCALE, y*TILE*MAP_SCALE, TILE*MAP_SCALE, TILE*MAP_SCALE);
+        }
+      }
+    }
+  }
+
+  // Coordinate labels
+  ctx.font = '10px monospace';
+  ctx.fillStyle = 'rgba(255,255,255,0.15)';
+  for (let x = 0; x < MAP_W; x++) ctx.fillText(x, x*TILE*MAP_SCALE + 2, 10);
+  for (let y = 0; y < MAP_H; y++) ctx.fillText(y, 2, y*TILE*MAP_SCALE + 12);
+
+  canvas.onmousedown = canvas.onmousemove = (e) => {
+    if (e.buttons !== 1 && e.buttons !== 2) return;
+    const rect = canvas.getBoundingClientRect();
+    const mx = Math.floor((e.clientX - rect.left) / (TILE * MAP_SCALE));
+    const my = Math.floor((e.clientY - rect.top) / (TILE * MAP_SCALE));
+    if (mx < 0 || mx >= MAP_W || my < 0 || my >= MAP_H) return;
+    if (e.buttons === 2) { mapData[mx][my] = {id: -1, source: null, img: null}; }
+    else if (currentBrush) { mapData[mx][my] = {id: currentBrush.id, source: currentBrush.source, img: currentBrush.img}; }
+    renderMap();
+  };
+  canvas.oncontextmenu = (e) => e.preventDefault();
+
+  container.appendChild(canvas);
+}
+
+function exportMap() {
+  // Export as JS arrays
+  const bg = [];
+  for (let x = 0; x < MAP_W; x++) {
+    const col = [];
+    for (let y = 0; y < MAP_H; y++) {
+      col.push(mapData[x][y].id >= 0 ? mapData[x][y].id : -1);
+    }
+    bg.push(col);
+  }
+  const js = `// Auto-generated office tilemap\nconst OFFICE_MAP_W = ${MAP_W};\nconst OFFICE_MAP_H = ${MAP_H};\nconst OFFICE_TILES = ${JSON.stringify(bg)};\n`;
+  const pre = document.getElementById('export-output');
+  pre.style.display = 'block';
+  pre.textContent = js;
+  navigator.clipboard.writeText(js).catch(() => {});
+}
+
+function clearMap() {
+  mapData = Array.from({length: MAP_W}, () => Array.from({length: MAP_H}, () => ({id: -1, source: null})));
+  renderMap();
+}
+
+// Build grids
+buildGrid(donargImg, 'donarg-grid', DONARG_COLS, DONARG_ROWS, 'donarg');
+buildGrid(masImg, 'masalimov-grid', MAS_COLS, MAS_ROWS, 'masalimov');
+</script>
+</body>
+</html>

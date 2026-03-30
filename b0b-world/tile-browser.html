@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="UTF-8">
+<title>Donarg Tile Browser</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#111; color:#eee; font-family:'SF Mono',monospace; padding:16px; }
+  h1 { font-size:18px; margin-bottom:8px; color:#f59e0b; }
+  .info { font-size:11px; color:#666; margin-bottom:16px; }
+  #grid { display:flex; flex-wrap:wrap; gap:2px; }
+  .tile { position:relative; cursor:pointer; border:1px solid #222; }
+  .tile:hover { border-color:#f59e0b; z-index:10; }
+  .tile.selected { border-color:#10b981; border-width:2px; }
+  .tile canvas { display:block; image-rendering:pixelated; }
+  .tile .idx { position:absolute; bottom:0; left:0; font-size:7px; color:#999; background:rgba(0,0,0,0.7); padding:0 2px; pointer-events:none; }
+  #selected-tiles { position:fixed; top:16px; right:16px; background:#1a1a2e; border:1px solid #333; border-radius:8px; padding:12px; max-width:320px; max-height:90vh; overflow-y:auto; }
+  #selected-tiles h2 { font-size:14px; color:#10b981; margin-bottom:8px; }
+  .picked { display:inline-flex; flex-direction:column; align-items:center; margin:4px; }
+  .picked canvas { image-rendering:pixelated; border:1px solid #333; }
+  .picked span { font-size:9px; color:#888; }
+  #categories { margin-bottom:12px; }
+  #categories label { margin-right:8px; font-size:11px; color:#aaa; cursor:pointer; }
+  #categories select { background:#222; color:#eee; border:1px solid #444; padding:2px 6px; font-size:11px; }
+  .copy-btn { background:#f59e0b; color:#000; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:10px; font-weight:bold; margin-top:8px; }
+  #output { margin-top:8px; font-size:10px; color:#888; background:#0a0a0a; padding:8px; border-radius:4px; white-space:pre-wrap; max-height:200px; overflow-y:auto; }
+</style>
+</head><body>
+<h1>Donarg Office Tile Browser (32x32)</h1>
+<div class="info">Click tiles to select them. Build your palette on the right. 512x1024 = 16 cols x 32 rows = 512 tiles.</div>
+<div id="categories">
+  <label>Filter: <select id="filter" onchange="filterTiles()">
+    <option value="all">All (512)</option>
+    <option value="0-48">Rows 0-2: Desks</option>
+    <option value="48-96">Rows 3-5: More desks/cabinets</option>
+    <option value="96-160">Rows 6-9: Floors + Shelves</option>
+    <option value="160-208">Rows 10-12: Chairs/Doors</option>
+    <option value="208-272">Rows 13-16: Couches/Windows/Clocks/Computers</option>
+    <option value="272-352">Rows 17-21: Art/Whiteboards/Plants/Boxes</option>
+    <option value="352-512">Rows 22-31: More items</option>
+  </select></label>
+  <label>Scale: <select id="scaleSelect" onchange="rebuildGrid()">
+    <option value="2">2x (64px)</option>
+    <option value="3" selected>3x (96px)</option>
+    <option value="4">4x (128px)</option>
+  </select></label>
+</div>
+<div style="display:flex; gap:16px;">
+  <div id="grid" style="flex:1;"></div>
+</div>
+<div id="selected-tiles">
+  <h2>Selected Tiles</h2>
+  <div id="picked"></div>
+  <button class="copy-btn" onclick="copySelection()">Copy JS Object</button>
+  <div id="output"></div>
+</div>
+
+<script>
+const IMG_SRC = "donarg-office-32.png";
+const COLS = 16, TILE = 32;
+let img, totalRows, totalTiles;
+const selected = new Map(); // idx -> category name
+
+const categoryNames = {
+  floor: "#10b981", wall: "#6366f1", desk: "#f59e0b", chair: "#ef4444",
+  computer: "#06b6d4", bookshelf: "#8b5cf6", plant: "#22c55e", box: "#f97316",
+  door: "#a78bfa", window: "#818cf8", decor: "#71717a", other: "#52525b"
+};
+let currentCategory = "floor";
+
+window.onload = () => {
+  img = new Image();
+  img.onload = () => {
+    totalRows = Math.floor(img.height / TILE);
+    totalTiles = COLS * totalRows;
+    rebuildGrid();
+    // Category buttons
+    const catDiv = document.createElement("div");
+    catDiv.style.cssText = "margin-bottom:8px;";
+    catDiv.innerHTML = Object.entries(categoryNames).map(([name, color]) =>
+      `<label style="margin-right:6px;"><input type="radio" name="cat" value="${name}" ${name==="floor"?"checked":""} onchange="currentCategory='${name}'"> <span style="color:${color};font-size:10px">${name}</span></label>`
+    ).join("");
+    document.getElementById("categories").appendChild(catDiv);
+  };
+  img.src = IMG_SRC;
+};
+
+function rebuildGrid() {
+  const scale = parseInt(document.getElementById("scaleSelect").value);
+  const grid = document.getElementById("grid");
+  grid.innerHTML = "";
+  const filter = document.getElementById("filter").value;
+  let start = 0, end = totalTiles;
+  if (filter !== "all") { const [s,e] = filter.split("-").map(Number); start = s; end = e; }
+
+  for (let idx = start; idx < Math.min(end, totalTiles); idx++) {
+    const col = idx % COLS, row = Math.floor(idx / COLS);
+    const div = document.createElement("div");
+    div.className = "tile" + (selected.has(idx) ? " selected" : "");
+    div.onclick = () => toggleTile(idx);
+
+    const c = document.createElement("canvas");
+    c.width = TILE * scale; c.height = TILE * scale;
+    const ctx = c.getContext("2d");
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(img, col * TILE, row * TILE, TILE, TILE, 0, 0, TILE * scale, TILE * scale);
+    div.appendChild(c);
+
+    const lbl = document.createElement("div");
+    lbl.className = "idx";
+    lbl.textContent = idx;
+    div.appendChild(lbl);
+
+    if (selected.has(idx)) {
+      div.style.borderColor = categoryNames[selected.get(idx)] || "#10b981";
+    }
+    grid.appendChild(div);
+  }
+}
+
+function filterTiles() { rebuildGrid(); }
+
+function toggleTile(idx) {
+  if (selected.has(idx)) {
+    selected.delete(idx);
+  } else {
+    selected.set(idx, currentCategory);
+  }
+  rebuildGrid();
+  updatePicked();
+}
+
+function updatePicked() {
+  const div = document.getElementById("picked");
+  div.innerHTML = "";
+  const scale = 3;
+  for (const [idx, cat] of selected) {
+    const col = idx % COLS, row = Math.floor(idx / COLS);
+    const wrapper = document.createElement("div");
+    wrapper.className = "picked";
+    const c = document.createElement("canvas");
+    c.width = TILE * scale; c.height = TILE * scale;
+    const ctx = c.getContext("2d");
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(img, col * TILE, row * TILE, TILE, TILE, 0, 0, TILE * scale, TILE * scale);
+    c.style.borderColor = categoryNames[cat] || "#333";
+    wrapper.appendChild(c);
+    const lbl = document.createElement("span");
+    lbl.textContent = `${idx} (${cat})`;
+    lbl.style.color = categoryNames[cat];
+    wrapper.appendChild(lbl);
+    div.appendChild(wrapper);
+  }
+}
+
+function copySelection() {
+  const grouped = {};
+  for (const [idx, cat] of selected) {
+    if (!grouped[cat]) grouped[cat] = [];
+    grouped[cat].push(idx);
+  }
+  const lines = ["const DONARG = {"];
+  for (const [cat, ids] of Object.entries(grouped)) {
+    lines.push(`  // ${cat}`);
+    ids.forEach((id, i) => lines.push(`  ${cat.toUpperCase()}_${i}: ${id},`));
+  }
+  lines.push("};");
+  const text = lines.join("\n");
+  navigator.clipboard.writeText(text).catch(() => {});
+  document.getElementById("output").textContent = text;
+}
+</script>
+</body></html>

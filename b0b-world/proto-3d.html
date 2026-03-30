@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>b0b world — 3D</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0a0a0f; overflow: hidden; font-family: -apple-system, sans-serif; }
+  canvas { display: block; }
+  #overlay {
+    position: fixed; top: 16px; left: 16px; z-index: 10;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .agent-card {
+    background: rgba(0,0,0,0.7); backdrop-filter: blur(8px);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 10px; padding: 10px 14px;
+    color: #e4e4e7; font-size: 12px;
+    display: flex; gap: 10px; align-items: center;
+    min-width: 240px;
+  }
+  .agent-card .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .agent-card .name { font-weight: 600; font-size: 13px; }
+  .agent-card .task { color: #a1a1aa; font-size: 11px; margin-top: 2px; }
+  .agent-card .phase {
+    font-size: 10px; font-weight: 600; padding: 2px 8px;
+    border-radius: 6px; margin-left: auto; letter-spacing: 0.3px;
+  }
+  #title-bar {
+    position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); z-index: 10;
+    background: rgba(0,0,0,0.7); backdrop-filter: blur(8px);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 12px; padding: 10px 20px;
+    color: #e4e4e7; font-size: 14px;
+    display: flex; align-items: center; gap: 12px;
+    font-family: 'SF Mono', 'JetBrains Mono', monospace;
+  }
+  #title-bar .b0b { font-weight: 700; font-size: 16px; }
+  #title-bar .zero { color: #f59e0b; }
+  #title-bar .sep { color: rgba(255,255,255,0.2); }
+  #title-bar .stat { color: #a1a1aa; }
+  #title-bar .stat .n { color: #e4e4e7; font-weight: 600; }
+  #title-bar .tag { font-size: 11px; color: #71717a; font-style: italic; }
+</style>
+</head>
+<body>
+<div id="overlay"></div>
+<div id="title-bar">
+  <span class="b0b">b<span class="zero">0</span>b</span>
+  <span class="tag">3D</span>
+  <span class="sep">|</span>
+  <span class="stat"><span class="n">5</span> active</span>
+  <span class="sep">|</span>
+  <span class="stat"><span class="n">1</span> merged</span>
+  <span class="sep">|</span>
+  <span class="stat"><span class="n">2</span> failed</span>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.175.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.175.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const AGENTS = [
+  { id: "onboarding-flow-002", agent: "codex", phase: "planning", status: "unknown", desc: "Redesign onboarding flow" },
+  { id: "lazy-images-003", agent: "claude", phase: "implementing", status: "unknown", desc: "Lazy load images in preview" },
+  { id: "template-crash-004", agent: "codex", phase: "auditing", status: "unknown", desc: "Fix template crash" },
+  { id: "analytics-dash-005", agent: "claude", phase: "testing", status: "unknown", desc: "Campaign analytics dashboard" },
+  { id: "font-loading-006", agent: "codex", phase: "pr_ready", status: "unknown", desc: "Fix font loading race" },
+  { id: "inspo-alert-001", agent: "claude", phase: "merged", status: "succeeded", desc: "Image URL in Slack alerts" },
+  { id: "broken-email-001", agent: "claude", phase: "failed", status: "succeeded", desc: "Broken email + missing alert" },
+];
+
+const PHASE_COLORS = {
+  planning: 0xa78bfa, implementing: 0xf59e0b, auditing: 0x06b6d4,
+  testing: 0x22c55e, pr_ready: 0x8b5cf6, merged: 0x10b981, failed: 0xef4444,
+};
+const PHASE_HEX = {
+  planning: "#a78bfa", implementing: "#f59e0b", auditing: "#06b6d4",
+  testing: "#22c55e", pr_ready: "#8b5cf6", merged: "#10b981", failed: "#ef4444",
+};
+
+// Station 3D positions
+const STATIONS = {
+  planning:     { x: -6, z: -4 },
+  implementing: { x: -2, z: -4 },
+  auditing:     { x: 2, z: -2 },
+  testing:      { x: -2, z: 0 },
+  pr_ready:     { x: -6, z: 0 },
+  merged:       { x: 4, z: 2 },
+  failed:       { x: -8, z: 3 },
+};
+
+// ── Scene Setup ────────────────────────────────────
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0a0a0f);
+scene.fog = new THREE.FogExp2(0x0a0a0f, 0.03);
+
+// Orthographic camera (isometric angle)
+const aspect = window.innerWidth / window.innerHeight;
+const frustum = 12;
+const camera = new THREE.OrthographicCamera(
+  -frustum * aspect, frustum * aspect, frustum, -frustum, 0.1, 100
+);
+camera.position.set(15, 15, 15);
+camera.lookAt(0, 0, 0);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.insertBefore(renderer.domElement, document.getElementById("overlay"));
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.05;
+controls.maxPolarAngle = Math.PI / 2.5;
+controls.minPolarAngle = Math.PI / 6;
+
+// ── Lights ─────────────────────────────────────────
+const ambientLight = new THREE.AmbientLight(0x404060, 0.8);
+scene.add(ambientLight);
+
+const dirLight = new THREE.DirectionalLight(0xfff0dd, 1.2);
+dirLight.position.set(8, 12, 6);
+dirLight.castShadow = true;
+dirLight.shadow.mapSize.set(2048, 2048);
+dirLight.shadow.camera.near = 0.1;
+dirLight.shadow.camera.far = 40;
+dirLight.shadow.camera.left = -15;
+dirLight.shadow.camera.right = 15;
+dirLight.shadow.camera.top = 15;
+dirLight.shadow.camera.bottom = -15;
+scene.add(dirLight);
+
+// ── Floor ──────────────────────────────────────────
+const floorGeo = new THREE.PlaneGeometry(30, 20);
+const floorMat = new THREE.MeshStandardMaterial({ color: 0x12121f, roughness: 0.9 });
+const floor = new THREE.Mesh(floorGeo, floorMat);
+floor.rotation.x = -Math.PI / 2;
+floor.receiveShadow = true;
+scene.add(floor);
+
+// Grid lines
+const gridHelper = new THREE.GridHelper(30, 30, 0x1a1a30, 0x1a1a30);
+gridHelper.position.y = 0.01;
+scene.add(gridHelper);
+
+// ── Desks / Stations ───────────────────────────────
+const deskGeo = new THREE.BoxGeometry(2, 0.15, 1.2);
+const legGeo = new THREE.CylinderGeometry(0.06, 0.06, 0.7, 8);
+const monitorGeo = new THREE.BoxGeometry(0.8, 0.6, 0.05);
+const screenGeo = new THREE.BoxGeometry(0.7, 0.5, 0.01);
+
+Object.entries(STATIONS).forEach(([phase, pos]) => {
+  const color = PHASE_COLORS[phase] || 0x666666;
+  const hasActive = AGENTS.some(a => a.phase === phase && a.status === "unknown");
+
+  // Desk
+  const deskMat = new THREE.MeshStandardMaterial({ color: 0x2a2a3a, roughness: 0.7 });
+  const desk = new THREE.Mesh(deskGeo, deskMat);
+  desk.position.set(pos.x, 0.7, pos.z);
+  desk.castShadow = true;
+  desk.receiveShadow = true;
+  scene.add(desk);
+
+  // Legs
+  const legMat = new THREE.MeshStandardMaterial({ color: 0x1a1a2a });
+  [[-0.8, -0.5], [0.8, -0.5], [-0.8, 0.5], [0.8, 0.5]].forEach(([lx, lz]) => {
+    const leg = new THREE.Mesh(legGeo, legMat);
+    leg.position.set(pos.x + lx, 0.35, pos.z + lz);
+    scene.add(leg);
+  });
+
+  // Monitor
+  const monMat = new THREE.MeshStandardMaterial({ color: 0x1a1a2e });
+  const monitor = new THREE.Mesh(monitorGeo, monMat);
+  monitor.position.set(pos.x, 1.1, pos.z - 0.4);
+  monitor.castShadow = true;
+  scene.add(monitor);
+
+  // Screen (emissive)
+  const screenMat = new THREE.MeshStandardMaterial({
+    color: color, emissive: color, emissiveIntensity: hasActive ? 0.5 : 0.1,
+    roughness: 0.3,
+  });
+  const screen = new THREE.Mesh(screenGeo, screenMat);
+  screen.position.set(pos.x, 1.1, pos.z - 0.36);
+  scene.add(screen);
+
+  // Phase-colored floor pad
+  const padGeo = new THREE.CircleGeometry(1.2, 32);
+  const padMat = new THREE.MeshStandardMaterial({
+    color: color, emissive: color,
+    emissiveIntensity: hasActive ? 0.15 : 0.03,
+    transparent: true, opacity: hasActive ? 0.4 : 0.1,
+  });
+  const pad = new THREE.Mesh(padGeo, padMat);
+  pad.rotation.x = -Math.PI / 2;
+  pad.position.set(pos.x, 0.02, pos.z);
+  scene.add(pad);
+
+  // Point light for active stations
+  if (hasActive) {
+    const light = new THREE.PointLight(color, 0.8, 6);
+    light.position.set(pos.x, 2, pos.z);
+    scene.add(light);
+  }
+});
+
+// ── Characters ─────────────────────────────────────
+const characters = [];
+const agentsByPhase = {};
+AGENTS.forEach(a => {
+  if (!agentsByPhase[a.phase]) agentsByPhase[a.phase] = [];
+  agentsByPhase[a.phase].push(a);
+});
+
+Object.entries(agentsByPhase).forEach(([phase, agents]) => {
+  const station = STATIONS[phase];
+  if (!station) return;
+  agents.forEach((agent, i) => {
+    const offset = (i - (agents.length - 1) / 2) * 1.2;
+    const isClaude = agent.agent === "claude";
+    const isActive = agent.status === "unknown";
+    const bodyColor = isClaude ? 0xf59e0b : 0x06b6d4;
+
+    const group = new THREE.Group();
+    group.position.set(station.x + offset, 0, station.z + 0.8);
+
+    // Body (capsule)
+    const bodyGeo = new THREE.CapsuleGeometry(0.25, 0.5, 8, 16);
+    const bodyMat = new THREE.MeshStandardMaterial({
+      color: bodyColor,
+      emissive: bodyColor,
+      emissiveIntensity: isActive ? 0.2 : 0.05,
+      roughness: 0.4, metalness: 0.1,
+    });
+    const body = new THREE.Mesh(bodyGeo, bodyMat);
+    body.position.y = 0.65;
+    body.castShadow = true;
+    group.add(body);
+
+    // Head (sphere)
+    const headGeo = new THREE.SphereGeometry(0.22, 16, 16);
+    const headMat = new THREE.MeshStandardMaterial({
+      color: bodyColor,
+      emissive: bodyColor,
+      emissiveIntensity: isActive ? 0.15 : 0.03,
+      roughness: 0.5,
+    });
+    const head = new THREE.Mesh(headGeo, headMat);
+    head.position.y = 1.2;
+    head.castShadow = true;
+    group.add(head);
+
+    // Eyes (white spheres)
+    const eyeGeo = new THREE.SphereGeometry(0.06, 8, 8);
+    const eyeMat = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 0.3 });
+    const eyeL = new THREE.Mesh(eyeGeo, eyeMat);
+    eyeL.position.set(-0.08, 1.22, 0.18);
+    group.add(eyeL);
+    const eyeR = new THREE.Mesh(eyeGeo, eyeMat);
+    eyeR.position.set(0.08, 1.22, 0.18);
+    group.add(eyeR);
+
+    // Pupils
+    const pupilGeo = new THREE.SphereGeometry(0.035, 8, 8);
+    const pupilMat = new THREE.MeshStandardMaterial({ color: 0x1a1a2e });
+    const pupilL = new THREE.Mesh(pupilGeo, pupilMat);
+    pupilL.position.set(-0.08, 1.22, 0.22);
+    group.add(pupilL);
+    const pupilR = new THREE.Mesh(pupilGeo, pupilMat);
+    pupilR.position.set(0.08, 1.22, 0.22);
+    group.add(pupilR);
+
+    // Status indicator (glowing sphere above head)
+    if (isActive) {
+      const indicatorGeo = new THREE.SphereGeometry(0.08, 8, 8);
+      const phaseColor = PHASE_COLORS[phase];
+      const indicatorMat = new THREE.MeshStandardMaterial({
+        color: phaseColor, emissive: phaseColor, emissiveIntensity: 1,
+        transparent: true, opacity: 0.8,
+      });
+      const indicator = new THREE.Mesh(indicatorGeo, indicatorMat);
+      indicator.position.y = 1.6;
+      group.add(indicator);
+    }
+
+    scene.add(group);
+    characters.push({ group, body, head, agent, isActive, phase: Math.random() * Math.PI * 2 });
+  });
+});
+
+// ── Ambient particles ──────────────────────────────
+const particleCount = 200;
+const particleGeo = new THREE.BufferGeometry();
+const positions = new Float32Array(particleCount * 3);
+for (let i = 0; i < particleCount; i++) {
+  positions[i * 3] = (Math.random() - 0.5) * 30;
+  positions[i * 3 + 1] = Math.random() * 8;
+  positions[i * 3 + 2] = (Math.random() - 0.5) * 20;
+}
+particleGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+const particleMat = new THREE.PointsMaterial({ color: 0x6666aa, size: 0.05, transparent: true, opacity: 0.4 });
+const particles = new THREE.Points(particleGeo, particleMat);
+scene.add(particles);
+
+// ── Animation Loop ─────────────────────────────────
+const clock = new THREE.Clock();
+
+function animate() {
+  requestAnimationFrame(animate);
+  const elapsed = clock.getElapsedTime();
+
+  // Animate characters
+  characters.forEach(c => {
+    // Idle bob
+    const bobAmount = c.isActive ? 0.1 : 0.03;
+    c.body.position.y = 0.65 + Math.sin(elapsed * 2 + c.phase) * bobAmount;
+    c.head.position.y = 1.2 + Math.sin(elapsed * 2 + c.phase) * bobAmount;
+
+    // Status indicator pulse
+    const indicator = c.group.children.find(ch => ch.position.y > 1.5);
+    if (indicator) {
+      indicator.position.y = 1.6 + Math.sin(elapsed * 3 + c.phase) * 0.1;
+      indicator.material.opacity = 0.5 + Math.sin(elapsed * 4 + c.phase) * 0.3;
+    }
+  });
+
+  // Animate particles
+  const posArr = particleGeo.attributes.position.array;
+  for (let i = 0; i < particleCount; i++) {
+    posArr[i * 3 + 1] += 0.003;
+    if (posArr[i * 3 + 1] > 8) posArr[i * 3 + 1] = 0;
+  }
+  particleGeo.attributes.position.needsUpdate = true;
+
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+
+// ── Resize ─────────────────────────────────────────
+window.addEventListener("resize", () => {
+  const a = window.innerWidth / window.innerHeight;
+  camera.left = -frustum * a;
+  camera.right = frustum * a;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// ── Overlay UI ─────────────────────────────────────
+const overlay = document.getElementById("overlay");
+const activeAgents = AGENTS.filter(a => a.status === "unknown");
+overlay.innerHTML = activeAgents.map(a => {
+  const color = PHASE_HEX[a.phase];
+  const agentColor = a.agent === "claude" ? "#f59e0b" : "#06b6d4";
+  return `<div class="agent-card">
+    <div class="dot" style="background:${agentColor};box-shadow:0 0 8px ${agentColor}"></div>
+    <div>
+      <div class="name" style="color:${agentColor}">${a.agent === "claude" ? "Claude" : "Codex"}</div>
+      <div class="task">${a.desc}</div>
+    </div>
+    <div class="phase" style="color:${color};background:${color}20;border:1px solid ${color}40">${a.phase}</div>
+  </div>`;
+}).join("");
+</script>
+</body>
+</html>
