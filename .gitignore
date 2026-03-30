@@ -1,0 +1,15 @@
+.env
+*.env
+.env.*
+credentials/
+*.pem
+*.key
+.secret-replacements
+*.p12
+*.pfx
+.DS_Store
+Thumbs.db
+node_modules/
+*.swp
+*.swo
+*~
