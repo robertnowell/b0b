@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>b0b world — isometric</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0f0f1a; overflow: hidden; font-family: -apple-system, sans-serif; }
+  #overlay {
+    position: fixed; top: 16px; left: 16px; z-index: 10;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .agent-card {
+    background: rgba(0,0,0,0.7); backdrop-filter: blur(8px);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 10px; padding: 10px 14px;
+    color: #e4e4e7; font-size: 12px;
+    display: flex; gap: 10px; align-items: center;
+    min-width: 240px;
+  }
+  .agent-card .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .agent-card .name { font-weight: 600; font-size: 13px; }
+  .agent-card .task { color: #a1a1aa; font-size: 11px; margin-top: 2px; }
+  .agent-card .phase {
+    font-size: 10px; font-weight: 600; padding: 2px 8px;
+    border-radius: 6px; margin-left: auto; letter-spacing: 0.3px;
+  }
+  #title-bar {
+    position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); z-index: 10;
+    background: rgba(0,0,0,0.7); backdrop-filter: blur(8px);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 12px; padding: 10px 20px;
+    color: #e4e4e7; font-size: 14px;
+    display: flex; align-items: center; gap: 12px;
+    font-family: 'SF Mono', 'JetBrains Mono', monospace;
+  }
+  #title-bar .b0b { font-weight: 700; font-size: 16px; }
+  #title-bar .zero { color: #f59e0b; }
+  #title-bar .sep { color: rgba(255,255,255,0.2); }
+  #title-bar .stat { color: #a1a1aa; }
+  #title-bar .stat .n { color: #e4e4e7; font-weight: 600; }
+  #title-bar .tag { font-size: 11px; color: #71717a; font-style: italic; }
+</style>
+</head>
+<body>
+<div id="overlay"></div>
+<div id="title-bar">
+  <span class="b0b">b<span class="zero">0</span>b</span>
+  <span class="tag">isometric</span>
+  <span class="sep">|</span>
+  <span class="stat"><span class="n">5</span> active</span>
+  <span class="sep">|</span>
+  <span class="stat"><span class="n">1</span> merged</span>
+  <span class="sep">|</span>
+  <span class="stat"><span class="n">2</span> failed</span>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
+<script>
+const AGENTS = [
+  { id: "onboarding-flow-002", agent: "codex", phase: "planning", status: "unknown", desc: "Redesign onboarding flow" },
+  { id: "lazy-images-003", agent: "claude", phase: "implementing", status: "unknown", desc: "Lazy load images in preview" },
+  { id: "template-crash-004", agent: "codex", phase: "auditing", status: "unknown", desc: "Fix template crash" },
+  { id: "analytics-dash-005", agent: "claude", phase: "testing", status: "unknown", desc: "Campaign analytics dashboard" },
+  { id: "font-loading-006", agent: "codex", phase: "pr_ready", status: "unknown", desc: "Fix font loading race" },
+  { id: "inspo-alert-001", agent: "claude", phase: "merged", status: "succeeded", desc: "Image URL in Slack alerts" },
+  { id: "broken-email-001", agent: "claude", phase: "failed", status: "succeeded", desc: "Broken email + missing alert" },
+];
+
+const PHASE_COLORS = {
+  planning: 0xa78bfa, plan_review: 0x818cf8, implementing: 0xf59e0b,
+  auditing: 0x06b6d4, fixing: 0xf97316, testing: 0x22c55e,
+  pr_ready: 0x8b5cf6, merged: 0x10b981, failed: 0xef4444,
+};
+const PHASE_HEX = {
+  planning: "#a78bfa", plan_review: "#818cf8", implementing: "#f59e0b",
+  auditing: "#06b6d4", fixing: "#f97316", testing: "#22c55e",
+  pr_ready: "#8b5cf6", merged: "#10b981", failed: "#ef4444",
+};
+
+// Station positions on the isometric grid (col, row)
+const STATIONS = {
+  planning:       { col: 2, row: 2, label: "Plan" },
+  implementing:   { col: 5, row: 2, label: "Build" },
+  auditing:       { col: 8, row: 3, label: "Audit" },
+  testing:        { col: 5, row: 5, label: "Test" },
+  pr_ready:       { col: 2, row: 5, label: "PR" },
+  merged:         { col: 8, row: 6, label: "Merged" },
+  failed:         { col: 1, row: 7, label: "Failed" },
+};
+
+const TILE_W = 64;
+const TILE_H = 32;
+const MAP_COLS = 11;
+const MAP_ROWS = 9;
+
+// Iso projection
+function isoToScreen(col, row) {
+  return {
+    x: (col - row) * (TILE_W / 2) + 400,
+    y: (col + row) * (TILE_H / 2) + 100,
+  };
+}
+
+class IsoScene extends Phaser.Scene {
+  constructor() { super({ key: "IsoScene" }); }
+
+  create() {
+    this.cameras.main.setBackgroundColor(0x0f0f1a);
+
+    // Draw isometric floor tiles
+    for (let r = 0; r < MAP_ROWS; r++) {
+      for (let c = 0; c < MAP_COLS; c++) {
+        const { x, y } = isoToScreen(c, r);
+        const isStation = Object.values(STATIONS).some(s => s.col === c && s.row === r);
+        this.drawDiamond(x, y, TILE_W, TILE_H, isStation ? 0x1e1e3a : 0x16162a, isStation ? 0.9 : 0.6, isStation ? 0x3a3a5c : 0x22223a);
+      }
+    }
+
+    // Draw station labels and glows
+    Object.entries(STATIONS).forEach(([phase, station]) => {
+      const { x, y } = isoToScreen(station.col, station.row);
+      const color = PHASE_COLORS[phase];
+      const hasActive = AGENTS.some(a => a.phase === phase && a.status === "unknown");
+
+      // Station glow
+      if (hasActive) {
+        const glow = this.add.graphics();
+        glow.fillStyle(color, 0.12);
+        this.drawDiamondOn(glow, x, y, TILE_W + 16, TILE_H + 8);
+        glow.fillStyle(color, 0.06);
+        this.drawDiamondOn(glow, x, y, TILE_W + 32, TILE_H + 16);
+        this.tweens.add({ targets: glow, alpha: { from: 0.4, to: 1 }, duration: 1500, yoyo: true, repeat: -1 });
+      }
+
+      // Station highlight tile
+      const tile = this.add.graphics();
+      tile.fillStyle(color, hasActive ? 0.2 : 0.08);
+      tile.lineStyle(1.5, color, hasActive ? 0.6 : 0.2);
+      this.drawDiamondOn(tile, x, y, TILE_W - 4, TILE_H - 2, true);
+
+      // Label
+      this.add.text(x, y + TILE_H / 2 + 8, station.label, {
+        fontSize: "11px", fontFamily: "monospace", color: hasActive ? "#e4e4e7" : "#71717a",
+        fontStyle: hasActive ? "bold" : "normal",
+      }).setOrigin(0.5);
+    });
+
+    // Draw connecting paths between stations
+    const paths = [
+      ["planning", "implementing"], ["implementing", "auditing"],
+      ["auditing", "testing"], ["testing", "pr_ready"],
+      ["pr_ready", "merged"], ["auditing", "failed"],
+    ];
+    paths.forEach(([from, to]) => {
+      const a = isoToScreen(STATIONS[from].col, STATIONS[from].row);
+      const b = isoToScreen(STATIONS[to].col, STATIONS[to].row);
+      const g = this.add.graphics();
+      g.lineStyle(1, 0xffffff, 0.08);
+      const steps = 12;
+      for (let i = 0; i < steps; i += 2) {
+        const t1 = i / steps, t2 = (i + 1) / steps;
+        g.beginPath();
+        g.moveTo(a.x + (b.x - a.x) * t1, a.y + (b.y - a.y) * t1);
+        g.lineTo(a.x + (b.x - a.x) * t2, a.y + (b.y - a.y) * t2);
+        g.strokePath();
+      }
+    });
+
+    // Draw characters
+    this.characters = [];
+    const agentsByPhase = {};
+    AGENTS.forEach(a => {
+      if (!agentsByPhase[a.phase]) agentsByPhase[a.phase] = [];
+      agentsByPhase[a.phase].push(a);
+    });
+
+    Object.entries(agentsByPhase).forEach(([phase, agents]) => {
+      const station = STATIONS[phase];
+      if (!station) return;
+      agents.forEach((agent, i) => {
+        const offset = (i - (agents.length - 1) / 2) * 28;
+        const { x, y } = isoToScreen(station.col, station.row);
+        const cx = x + offset;
+        const cy = y - 20;
+        const char = this.createCharacter(cx, cy, agent);
+        this.characters.push(char);
+      });
+    });
+
+    // Camera drag
+    this.input.on("pointermove", (p) => {
+      if (!p.isDown) return;
+      this.cameras.main.scrollX -= (p.x - p.prevPosition.x) / this.cameras.main.zoom;
+      this.cameras.main.scrollY -= (p.y - p.prevPosition.y) / this.cameras.main.zoom;
+    });
+    this.input.on("wheel", (pointer, gameObjects, deltaX, deltaY) => {
+      const zoom = this.cameras.main.zoom;
+      this.cameras.main.setZoom(Phaser.Math.Clamp(zoom - deltaY * 0.001, 0.5, 3));
+    });
+  }
+
+  createCharacter(x, y, agent) {
+    const isClaude = agent.agent === "claude";
+    const isActive = agent.status === "unknown";
+    const bodyColor = isClaude ? 0xf59e0b : 0x06b6d4;
+    const phaseColor = PHASE_COLORS[agent.phase];
+
+    const container = this.add.container(x, y);
+    container.setDepth(y + 100);
+
+    // Shadow
+    const shadow = this.add.graphics();
+    shadow.fillStyle(0x000000, 0.3);
+    shadow.fillEllipse(0, 14, 20, 8);
+    container.add(shadow);
+
+    // Body — isometric egg shape
+    const body = this.add.graphics();
+    body.fillStyle(bodyColor, isActive ? 1 : 0.5);
+    body.fillEllipse(0, 0, 18, 24);
+    // Highlight
+    body.fillStyle(0xffffff, 0.15);
+    body.fillEllipse(-3, -5, 8, 12);
+    container.add(body);
+
+    // Eyes
+    const eyes = this.add.graphics();
+    eyes.fillStyle(0xffffff, 0.95);
+    eyes.fillCircle(-4, -3, 3.5);
+    eyes.fillCircle(4, -3, 3.5);
+    eyes.fillStyle(0x1a1a2e, 1);
+    eyes.fillCircle(-3, -2.5, 2);
+    eyes.fillCircle(5, -2.5, 2);
+    // Glints
+    eyes.fillStyle(0xffffff, 1);
+    eyes.fillCircle(-2, -4, 1);
+    eyes.fillCircle(6, -4, 1);
+    container.add(eyes);
+
+    // Mouth
+    const mouth = this.add.graphics();
+    mouth.lineStyle(1.5, 0x1a1a2e, 0.6);
+    mouth.beginPath();
+    mouth.arc(0, 2, 3.5, 0.3, Math.PI - 0.3, false);
+    mouth.strokePath();
+    container.add(mouth);
+
+    // Agent label
+    const label = this.add.text(0, -18, isClaude ? "Claude" : "Codex", {
+      fontSize: "8px", fontFamily: "monospace", fontStyle: "bold",
+      color: isClaude ? "#f59e0b" : "#06b6d4",
+    }).setOrigin(0.5);
+    container.add(label);
+
+    // Phase indicator
+    if (isActive) {
+      const dot = this.add.graphics();
+      dot.fillStyle(phaseColor, 0.9);
+      dot.fillCircle(0, 0, 3);
+      dot.setPosition(0, -24);
+      container.add(dot);
+
+      // Thought bubble
+      const bubble = this.add.text(10, -22, "💭", { fontSize: "12px" }).setOrigin(0.5);
+      container.add(bubble);
+
+      this.tweens.add({
+        targets: dot, scaleX: { from: 0.8, to: 1.3 }, scaleY: { from: 0.8, to: 1.3 },
+        alpha: { from: 1, to: 0.4 }, duration: 1200, yoyo: true, repeat: -1,
+      });
+      this.tweens.add({
+        targets: bubble, y: { from: -22, to: -26 }, duration: 2000, yoyo: true, repeat: -1,
+      });
+    }
+
+    // Idle bounce
+    this.tweens.add({
+      targets: body, y: { from: 0, to: -3 }, duration: 800 + Math.random() * 400,
+      yoyo: true, repeat: -1, ease: "Sine.easeInOut",
+    });
+    this.tweens.add({
+      targets: eyes, y: { from: 0, to: -3 }, duration: 800 + Math.random() * 400,
+      yoyo: true, repeat: -1, ease: "Sine.easeInOut",
+    });
+    this.tweens.add({
+      targets: mouth, y: { from: 0, to: -3 }, duration: 800 + Math.random() * 400,
+      yoyo: true, repeat: -1, ease: "Sine.easeInOut",
+    });
+
+    // Blink
+    this.time.addEvent({
+      delay: 2500 + Math.random() * 3000, loop: true,
+      callback: () => {
+        this.tweens.add({ targets: eyes, scaleY: 0.1, duration: 80, yoyo: true });
+      },
+    });
+
+    return { container, body, agent };
+  }
+
+  drawDiamond(x, y, w, h, fill, alpha, stroke) {
+    const g = this.add.graphics();
+    g.fillStyle(fill, alpha);
+    g.lineStyle(1, stroke, 0.5);
+    this.drawDiamondOn(g, x, y, w, h, true);
+  }
+
+  drawDiamondOn(g, x, y, w, h, doStroke) {
+    g.beginPath();
+    g.moveTo(x, y - h / 2);
+    g.lineTo(x + w / 2, y);
+    g.lineTo(x, y + h / 2);
+    g.lineTo(x - w / 2, y);
+    g.closePath();
+    g.fillPath();
+    if (doStroke) g.strokePath();
+  }
+
+  update() {}
+}
+
+const config = {
+  type: Phaser.AUTO,
+  width: window.innerWidth,
+  height: window.innerHeight,
+  backgroundColor: "#0f0f1a",
+  scene: IsoScene,
+  scale: { mode: Phaser.Scale.RESIZE, autoCenter: Phaser.Scale.CENTER_BOTH },
+  render: { pixelArt: true, antialias: false },
+};
+
+const game = new Phaser.Game(config);
+
+// Overlay UI
+const overlay = document.getElementById("overlay");
+const activeAgents = AGENTS.filter(a => a.status === "unknown");
+overlay.innerHTML = activeAgents.map(a => {
+  const color = PHASE_HEX[a.phase];
+  const agentColor = a.agent === "claude" ? "#f59e0b" : "#06b6d4";
+  return `<div class="agent-card">
+    <div class="dot" style="background:${agentColor};box-shadow:0 0 8px ${agentColor}"></div>
+    <div>
+      <div class="name" style="color:${agentColor}">${a.agent === "claude" ? "Claude" : "Codex"}</div>
+      <div class="task">${a.desc}</div>
+    </div>
+    <div class="phase" style="color:${color};background:${color}20;border:1px solid ${color}40">${a.phase}</div>
+  </div>`;
+}).join("");
+</script>
+</body>
+</html>

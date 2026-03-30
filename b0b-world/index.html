@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>b0b world</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #1a1a2e; overflow: hidden; font-family: 'JetBrains Mono', monospace; }
+  canvas { display: block; image-rendering: pixelated; cursor: grab; }
+  canvas:active { cursor: grabbing; }
+
+  /* ── Agent Cards (left) ───────────────────────── */
+  #agent-panel {
+    position: fixed; top: 12px; left: 12px; z-index: 10;
+    display: flex; flex-direction: column; gap: 6px;
+    max-height: calc(100vh - 80px); overflow-y: auto;
+  }
+  .agent-card {
+    background: rgba(0,0,0,0.75); backdrop-filter: blur(12px);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 8px; padding: 8px 12px;
+    color: #e4e4e7; font-size: 11px;
+    display: flex; gap: 10px; align-items: center;
+    min-width: 220px; cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+  }
+  .agent-card:hover { background: rgba(255,255,255,0.06); }
+  .agent-card.selected { border-color: rgba(255,255,255,0.25); background: rgba(255,255,255,0.08); }
+  .agent-card .avatar { width: 28px; height: 28px; border-radius: 6px; image-rendering: pixelated; flex-shrink: 0; }
+  .agent-card .info { flex: 1; min-width: 0; }
+  .agent-card .name { font-weight: 600; font-size: 12px; }
+  .agent-card .task { color: #71717a; font-size: 10px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .agent-card .phase-tag {
+    font-size: 9px; font-weight: 600; padding: 2px 6px;
+    border-radius: 4px; flex-shrink: 0; letter-spacing: 0.3px; text-transform: uppercase;
+  }
+
+  /* ── Detail Popup ─────────────────────────────── */
+  #detail-popup {
+    display: none; position: fixed; z-index: 20;
+    background: rgba(0,0,0,0.85); backdrop-filter: blur(16px);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 12px; padding: 16px 20px;
+    color: #e4e4e7; font-size: 12px;
+    max-width: 320px; pointer-events: auto;
+  }
+  #detail-popup.visible { display: block; }
+  #detail-popup .dp-header { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  #detail-popup .dp-name { font-weight: 700; font-size: 15px; }
+  #detail-popup .dp-close { cursor: pointer; color: #71717a; margin-left: auto; font-size: 16px; }
+  #detail-popup .dp-close:hover { color: #e4e4e7; }
+  #detail-popup .dp-row { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.04); }
+  #detail-popup .dp-label { color: #71717a; }
+  #detail-popup .dp-value { font-weight: 500; text-align: right; max-width: 180px; }
+  #detail-popup .dp-desc { color: #a1a1aa; margin-top: 8px; line-height: 1.5; font-size: 11px; }
+
+  /* ── Bottom Bar ───────────────────────────────── */
+  #bottom-bar {
+    position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%); z-index: 10;
+    background: rgba(0,0,0,0.75); backdrop-filter: blur(12px);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 10px; padding: 8px 20px;
+    color: #e4e4e7; font-size: 13px;
+    display: flex; align-items: center; gap: 16px;
+  }
+  #bottom-bar .logo { font-weight: 700; font-size: 15px; }
+  #bottom-bar .zero { color: #f59e0b; }
+  #bottom-bar .sep { color: rgba(255,255,255,0.15); }
+  #bottom-bar .stat { color: #a1a1aa; font-size: 12px; }
+  #bottom-bar .stat .n { color: #e4e4e7; font-weight: 600; }
+  #bottom-bar .credits { color: #3f3f46; font-size: 9px; margin-left: 8px; }
+  #bottom-bar .credits a { color: #52525b; }
+</style>
+</head>
+<body>
+
+<div id="agent-panel"></div>
+<div id="detail-popup"><div class="dp-close" onclick="closeDetail()">&times;</div></div>
+<div id="bottom-bar">
+  <span class="logo">b<span class="zero">0</span>b</span>
+  <span class="sep">|</span>
+  <span class="stat"><span class="n" id="s-active">0</span> active</span>
+  <span class="sep">|</span>
+  <span class="stat"><span class="n" id="s-merged">0</span> merged</span>
+  <span class="sep">|</span>
+  <span class="stat"><span class="n" id="s-failed">0</span> failed</span>
+  <span class="credits">art: <a href="https://opengameart.org" target="_blank">OpenGameArt</a> CC-BY 4.0 | adapted from <a href="https://github.com/a16z-infra/ai-town" target="_blank">a16z AI Town</a> MIT</span>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/7.4.2/pixi.min.js"></script>
+<script src="mapdata.js"></script>
+<script src="animdata.js"></script>
+<script>
+// ── Pipeline Data ────────────────────────────────────────────────────────────
+const AGENTS = [
+  { id: "onboarding-flow-002", agent: "codex", char: "f3", phase: "planning", status: "unknown",
+    iteration: 1, maxIter: 4, desc: "Redesign onboarding flow for new merchants",
+    goal: "Reduce time-to-first-email from 12min to 5", tileX: 8, tileY: 9 },
+  { id: "lazy-images-003", agent: "claude", char: "f1", phase: "implementing", status: "unknown",
+    iteration: 1, maxIter: 4, desc: "Lazy load images in email preview",
+    goal: "Improve editor performance on image-heavy emails", tileX: 22, tileY: 10 },
+  { id: "template-crash-004", agent: "codex", char: "f4", phase: "auditing", status: "unknown",
+    iteration: 2, maxIter: 4, desc: "Fix template rendering crash on empty sections",
+    goal: "Eliminate crashes when merchants delete all content", tileX: 34, tileY: 14 },
+  { id: "analytics-dash-005", agent: "claude", char: "f6", phase: "testing", status: "unknown",
+    iteration: 1, maxIter: 4, desc: "Add campaign performance analytics dashboard",
+    goal: "Give merchants visibility into open/click rates", tileX: 16, tileY: 21 },
+  { id: "font-loading-006", agent: "codex", char: "f7", phase: "pr_ready", status: "unknown",
+    iteration: 1, maxIter: 4, desc: "Fix custom font loading race condition",
+    goal: "Fonts render correctly on first load", tileX: 36, tileY: 28 },
+  { id: "inspo-alert-001", agent: "claude", char: "f5", phase: "merged", status: "succeeded",
+    iteration: 1, maxIter: 4, desc: "Include image URL in Slack alerts",
+    goal: "Make alerts actionable", tileX: 4, tileY: 33, prNumber: 1675 },
+  { id: "broken-email-001", agent: "claude", char: "f2", phase: "failed", status: "succeeded",
+    iteration: 2, maxIter: 4, desc: "Broken email error + missing Slack alert",
+    goal: "Catch failed generations before publishing", tileX: 10, tileY: 42, prNumber: 1674 },
+  { id: "visual-richness-001", agent: "claude", char: "f8", phase: "failed", status: "unknown",
+    iteration: 1, maxIter: 4, desc: "Visual richness slider for brand creation",
+    goal: "Let merchants control design vs deliverability", tileX: 6, tileY: 46 },
+];
+
+const PHASE_COLORS = {
+  planning: "#a78bfa", plan_review: "#818cf8", implementing: "#f59e0b",
+  auditing: "#06b6d4", fixing: "#f97316", testing: "#22c55e",
+  pr_ready: "#8b5cf6", merged: "#10b981", failed: "#ef4444", killed: "#6b7280",
+};
+const PHASE_LABELS = {
+  planning: "Plan", plan_review: "Review", implementing: "Build",
+  auditing: "Audit", fixing: "Fix", testing: "Test",
+  pr_ready: "PR", merged: "Merged", failed: "Failed", killed: "Killed",
+};
+
+// ── Character spritesheet definitions ────────────────────────────────────────
+function makeSheet(startX, startY) {
+  const w = 32, h = 32;
+  const dirs = { down: 0, left: 1, right: 2, up: 3 };
+  const frames = {}, animations = {};
+  for (const [dir, row] of Object.entries(dirs)) {
+    const y = startY + row * h;
+    for (let i = 0; i < 3; i++) {
+      const name = `${dir}${i || ''}`;
+      frames[name] = { frame: { x: startX + i * w, y, w, h }, sourceSize: { w, h }, spriteSourceSize: { x: 0, y: 0 } };
+    }
+    animations[dir] = [dir, `${dir}1`, `${dir}2`];
+  }
+  return { frames, animations, meta: { scale: "1" } };
+}
+
+// 8 characters from 32x32folk.png (4 per row, each 96x128)
+const CHAR_SHEETS = {
+  f1: makeSheet(0, 0),     f2: makeSheet(96, 0),    f3: makeSheet(192, 0),   f4: makeSheet(288, 0),
+  f5: makeSheet(0, 128),   f6: makeSheet(96, 128),  f7: makeSheet(192, 128), f8: makeSheet(288, 128),
+};
+
+// ── PIXI App ─────────────────────────────────────────────────────────────────
+const SCALE = 2.5;
+const app = new PIXI.Application({
+  width: window.innerWidth, height: window.innerHeight,
+  backgroundColor: 0x111118, antialias: false,
+});
+document.body.insertBefore(app.view, document.getElementById("agent-panel"));
+
+const world = new PIXI.Container();
+world.scale.set(SCALE);
+world.sortableChildren = true;
+app.stage.addChild(world);
+
+// ── Render Tilemap ───────────────────────────────────────────────────────────
+const tilesetBase = PIXI.BaseTexture.from("gentle-obj.png", { scaleMode: PIXI.SCALE_MODES.NEAREST });
+const numTX = Math.floor(TILESET_PX_W / TILE_W);
+const tiles = [];
+for (let y = 0; y < Math.floor(TILESET_PX_H / TILE_W); y++)
+  for (let x = 0; x < numTX; x++)
+    tiles[x + y * numTX] = new PIXI.Texture(tilesetBase, new PIXI.Rectangle(x * TILE_W, y * TILE_W, TILE_W, TILE_W));
+
+const mapContainer = new PIXI.Container();
+mapContainer.zIndex = 0;
+for (let x = 0; x < MAP_W; x++) {
+  for (let y = 0; y < MAP_H; y++) {
+    const bgIdx = BG_TILES[x]?.[y];
+    if (bgIdx >= 0 && bgIdx < tiles.length) {
+      const s = new PIXI.Sprite(tiles[bgIdx]);
+      s.x = x * TILE_W; s.y = y * TILE_W;
+      mapContainer.addChild(s);
+    }
+    const objIdx = OBJ_TILES[x]?.[y];
+    if (objIdx >= 0 && objIdx < tiles.length) {
+      const s = new PIXI.Sprite(tiles[objIdx]);
+      s.x = x * TILE_W; s.y = y * TILE_W;
+      mapContainer.addChild(s);
+    }
+  }
+}
+world.addChild(mapContainer);
+
+// ── Animated Environment Sprites ─────────────────────────────────────────────
+const ANIM_ASSETS = {
+  "campfire.json": { data: CAMPFIRE_SHEET, url: "campfire.png" },
+  "gentlesparkle.json": { data: SPARKLE_SHEET, url: "gentlesparkle32.png" },
+  "gentlewaterfall.json": { data: WATERFALL_SHEET, url: "gentlewaterfall32.png" },
+};
+
+const envContainer = new PIXI.Container();
+envContainer.zIndex = 1;
+world.addChild(envContainer);
+
+async function loadEnvAnims() {
+  const sheetCache = {};
+  for (const [key, { data, url }] of Object.entries(ANIM_ASSETS)) {
+    const base = PIXI.BaseTexture.from(url, { scaleMode: PIXI.SCALE_MODES.NEAREST });
+    const sheet = new PIXI.Spritesheet(base, data);
+    await sheet.parse();
+    sheetCache[key] = sheet;
+  }
+
+  for (const sprite of ANIM_SPRITES) {
+    const sheet = sheetCache[sprite.sheet];
+    if (!sheet) continue;
+    const animFrames = sheet.animations[sprite.animation];
+    if (!animFrames) continue;
+    const anim = new PIXI.AnimatedSprite(animFrames);
+    anim.x = sprite.x; anim.y = sprite.y;
+    anim.width = sprite.w; anim.height = sprite.h;
+    anim.animationSpeed = 0.08;
+    anim.play();
+    envContainer.addChild(anim);
+  }
+}
+loadEnvAnims();
+
+// ── Render Characters ────────────────────────────────────────────────────────
+const charBase = PIXI.BaseTexture.from("32x32folk.png", { scaleMode: PIXI.SCALE_MODES.NEAREST });
+const charContainer = new PIXI.Container();
+charContainer.zIndex = 2;
+charContainer.sortableChildren = true;
+world.addChild(charContainer);
+
+const characters = [];
+let selectedAgent = null;
+
+async function createCharacter(agent) {
+  const sheetData = CHAR_SHEETS[agent.char] || CHAR_SHEETS.f1;
+  const sheet = new PIXI.Spritesheet(charBase, sheetData);
+  await sheet.parse();
+
+  const container = new PIXI.Container();
+  container.x = agent.tileX * TILE_W + TILE_W / 2;
+  container.y = agent.tileY * TILE_W + TILE_W / 2;
+  container.zIndex = agent.tileY; // depth sort
+  container.interactive = true;
+  container.cursor = "pointer";
+  container.on("pointerdown", (e) => { e.stopPropagation(); selectAgent(agent, container); });
+
+  // Shadow
+  const shadow = new PIXI.Graphics();
+  shadow.beginFill(0x000000, 0.3);
+  shadow.drawEllipse(0, 8, 8, 3);
+  shadow.endFill();
+  container.addChild(shadow);
+
+  // Pick a random facing direction
+  const dirs = ["down", "left", "right", "up"];
+  const dir = dirs[Math.floor(Math.random() * dirs.length)];
+  const anim = new PIXI.AnimatedSprite(sheet.animations[dir]);
+  anim.anchor.set(0.5, 0.5);
+  anim.animationSpeed = agent.status === "unknown" ? 0.06 : 0.02;
+  anim.play();
+  container.addChild(anim);
+
+  // Status emoji
+  const isActive = agent.status === "unknown";
+  if (isActive) {
+    const emojis = { planning: "📝", implementing: "🔨", auditing: "🔍", testing: "🧪", fixing: "🔧", pr_ready: "🚀", plan_review: "👀" };
+    const emoji = emojis[agent.phase] || "💭";
+    const bubble = new PIXI.Text(emoji, { fontSize: 12 });
+    bubble.anchor.set(0.5, 1); bubble.position.set(6, -14); bubble.scale.set(0.6);
+    container.addChild(bubble);
+    characters.push({ container, anim, shadow, bubble, agent, isActive });
+  } else {
+    const emoji = agent.phase === "merged" ? "✅" : "❌";
+    const badge = new PIXI.Text(emoji, { fontSize: 10 });
+    badge.anchor.set(0.5, 1); badge.position.set(6, -12); badge.scale.set(0.5);
+    container.addChild(badge);
+    characters.push({ container, anim, shadow, agent, isActive: false });
+  }
+
+  // Name label
+  const color = agent.agent === "claude" ? "#f59e0b" : "#06b6d4";
+  const label = new PIXI.Text(agent.agent === "claude" ? "Claude" : "Codex", {
+    fontSize: 6, fill: color, fontFamily: "monospace", fontWeight: "bold",
+  });
+  label.anchor.set(0.5, 0); label.position.set(0, 14);
+  container.addChild(label);
+
+  // Phase indicator dot
+  const phaseColor = parseInt(PHASE_COLORS[agent.phase].replace("#",""), 16);
+  const dot = new PIXI.Graphics();
+  dot.beginFill(phaseColor, 0.9); dot.drawCircle(0, -20, 2.5); dot.endFill();
+  container.addChild(dot);
+
+  charContainer.addChild(container);
+}
+
+Promise.all(AGENTS.map(createCharacter));
+
+// ── Camera ───────────────────────────────────────────────────────────────────
+// Center on map
+const worldPxW = MAP_W * TILE_W * SCALE;
+const worldPxH = MAP_H * TILE_W * SCALE;
+world.x = (app.screen.width - worldPxW) / 2;
+world.y = (app.screen.height - worldPxH) / 2;
+
+let dragging = false, dragStart = {x:0,y:0}, worldStart = {x:0,y:0};
+app.view.addEventListener("pointerdown", (e) => {
+  dragging = true; dragStart = {x:e.clientX,y:e.clientY}; worldStart = {x:world.x,y:world.y};
+});
+app.view.addEventListener("pointermove", (e) => {
+  if (!dragging) return;
+  world.x = worldStart.x + (e.clientX - dragStart.x);
+  world.y = worldStart.y + (e.clientY - dragStart.y);
+});
+app.view.addEventListener("pointerup", () => dragging = false);
+app.view.addEventListener("pointerleave", () => dragging = false);
+app.view.addEventListener("wheel", (e) => {
+  e.preventDefault();
+  const factor = e.deltaY > 0 ? 0.92 : 1.08;
+  const newScale = Math.max(1, Math.min(5, world.scale.x * factor));
+  const mx = e.clientX, my = e.clientY;
+  const wx = (mx - world.x) / world.scale.x, wy = (my - world.y) / world.scale.y;
+  world.scale.set(newScale);
+  world.x = mx - wx * newScale; world.y = my - wy * newScale;
+}, { passive: false });
+
+// ── Animation Loop ───────────────────────────────────────────────────────────
+let elapsed = 0;
+app.ticker.add((delta) => {
+  elapsed += delta / 60;
+  characters.forEach((c, i) => {
+    const bounce = Math.sin(elapsed * 2.5 + i * 1.7) * (c.isActive ? 2 : 1);
+    c.anim.y = bounce;
+    if (c.bubble) c.bubble.y = -14 + Math.sin(elapsed * 1.5 + i) * 1.5;
+
+    // Selection highlight
+    if (selectedAgent === c.agent) {
+      c.container.alpha = 1;
+      // Subtle scale pulse
+      const pulse = 1 + Math.sin(elapsed * 4) * 0.05;
+      c.anim.scale.set(pulse);
+    } else {
+      c.container.alpha = c.isActive ? 1 : 0.7;
+      c.anim.scale.set(1);
+    }
+  });
+});
+
+// ── Agent Selection ──────────────────────────────────────────────────────────
+function selectAgent(agent, container) {
+  selectedAgent = agent;
+  document.querySelectorAll(".agent-card").forEach(c => c.classList.remove("selected"));
+  const card = document.querySelector(`[data-agent="${agent.id}"]`);
+  if (card) card.classList.add("selected");
+  showDetail(agent, container);
+}
+
+function showDetail(agent, container) {
+  const popup = document.getElementById("detail-popup");
+  const color = PHASE_COLORS[agent.phase];
+  const agentColor = agent.agent === "claude" ? "#f59e0b" : "#06b6d4";
+
+  // Position popup near agent (screen coords)
+  const globalPos = container.toGlobal(new PIXI.Point(0, 0));
+  popup.style.left = Math.min(globalPos.x + 30, window.innerWidth - 340) + "px";
+  popup.style.top = Math.min(Math.max(globalPos.y - 60, 10), window.innerHeight - 300) + "px";
+
+  popup.innerHTML = `
+    <div class="dp-close" onclick="closeDetail()">&times;</div>
+    <div class="dp-header">
+      <span class="dp-name" style="color:${agentColor}">${agent.agent === "claude" ? "Claude" : "Codex"}</span>
+      <span class="phase-tag" style="color:${color};background:${color}20;border:1px solid ${color}40">${PHASE_LABELS[agent.phase]}</span>
+    </div>
+    <div class="dp-row"><span class="dp-label">Task</span><span class="dp-value" style="color:#a78bfa">${agent.id}</span></div>
+    <div class="dp-row"><span class="dp-label">Iteration</span><span class="dp-value">${agent.iteration}/${agent.maxIter}</span></div>
+    ${agent.prNumber ? `<div class="dp-row"><span class="dp-label">PR</span><span class="dp-value" style="color:#10b981">#${agent.prNumber}</span></div>` : ''}
+    <div class="dp-row"><span class="dp-label">Status</span><span class="dp-value">${agent.status === "unknown" ? "In progress" : "Completed"}</span></div>
+    <div class="dp-desc">${agent.desc}</div>
+    <div class="dp-desc" style="color:#52525b;margin-top:4px">${agent.goal}</div>
+  `;
+  popup.classList.add("visible");
+}
+
+function closeDetail() {
+  document.getElementById("detail-popup").classList.remove("visible");
+  selectedAgent = null;
+  document.querySelectorAll(".agent-card").forEach(c => c.classList.remove("selected"));
+}
+
+// Close on click outside
+app.view.addEventListener("pointerdown", () => { if (!dragging) closeDetail(); });
+
+// ── UI Panels ────────────────────────────────────────────────────────────────
+const panel = document.getElementById("agent-panel");
+const sorted = [...AGENTS].sort((a, b) => {
+  if (a.status !== b.status) return a.status === "unknown" ? -1 : 1;
+  return 0;
+});
+
+panel.innerHTML = sorted.map(a => {
+  const color = PHASE_COLORS[a.phase];
+  const agentColor = a.agent === "claude" ? "#f59e0b" : "#06b6d4";
+  return `<div class="agent-card" data-agent="${a.id}" onclick="cardClick('${a.id}')">
+    <div style="width:8px;height:8px;border-radius:50%;background:${agentColor};box-shadow:0 0 6px ${agentColor};flex-shrink:0"></div>
+    <div class="info">
+      <div class="name" style="color:${agentColor}">${a.agent === "claude" ? "Claude" : "Codex"}</div>
+      <div class="task">${a.desc}</div>
+    </div>
+    <span class="phase-tag" style="color:${color};background:${color}15;border:1px solid ${color}30">${PHASE_LABELS[a.phase]}</span>
+  </div>`;
+}).join("");
+
+function cardClick(id) {
+  const agent = AGENTS.find(a => a.id === id);
+  if (!agent) return;
+  const char = characters.find(c => c.agent.id === id);
+  if (!char) return;
+
+  // Pan camera to agent
+  const targetX = app.screen.width / 2 - char.container.x * world.scale.x;
+  const targetY = app.screen.height / 2 - char.container.y * world.scale.y;
+  // Animate pan
+  const startX = world.x, startY = world.y;
+  let t = 0;
+  const panTicker = (delta) => {
+    t += delta / 60;
+    const ease = 1 - Math.pow(1 - Math.min(t * 2, 1), 3); // ease-out cubic
+    world.x = startX + (targetX - startX) * ease;
+    world.y = startY + (targetY - startY) * ease;
+    if (t >= 0.5) { app.ticker.remove(panTicker); }
+  };
+  app.ticker.add(panTicker);
+
+  selectAgent(agent, char.container);
+}
+
+// Stats
+document.getElementById("s-active").textContent = AGENTS.filter(a => a.status === "unknown").length;
+document.getElementById("s-merged").textContent = AGENTS.filter(a => a.phase === "merged").length;
+document.getElementById("s-failed").textContent = AGENTS.filter(a => a.phase === "failed").length;
+
+// Resize
+window.addEventListener("resize", () => app.renderer.resize(window.innerWidth, window.innerHeight));
+</script>
+</body>
+</html>

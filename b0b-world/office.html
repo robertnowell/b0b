@@ -1,0 +1,855 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>b0b world — severance office</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0a0b0f; overflow: hidden; font-family: 'JetBrains Mono', monospace; color: #e4e4e7; }
+  canvas { display: block; image-rendering: pixelated; cursor: grab; }
+  canvas:active { cursor: grabbing; }
+
+  #left-panel {
+    position: fixed; top: 12px; left: 12px; z-index: 10;
+    display: flex; flex-direction: column; gap: 6px;
+    max-height: calc(100vh - 80px); overflow-y: auto; width: 280px;
+    scrollbar-width: thin; scrollbar-color: #2a2a3a transparent;
+  }
+  .panel-section { background: rgba(0,0,0,0.8); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.06); border-radius: 10px; padding: 10px 12px; }
+  .panel-title { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: #52525b; margin-bottom: 6px; }
+  .char-card { display: flex; gap: 10px; align-items: center; padding: 6px; border-radius: 6px; }
+  .char-card .char-info { flex: 1; }
+  .char-card .char-name { font-weight: 700; font-size: 13px; }
+  .char-card .char-stat { font-size: 9px; color: #52525b; margin-top: 2px; }
+  .stat-row { display: flex; gap: 12px; margin-top: 3px; }
+  .stat-row .sv { font-size: 10px; font-weight: 600; }
+  .stat-row .sl { font-size: 9px; color: #52525b; }
+  .stat-bar { height: 3px; border-radius: 2px; background: rgba(255,255,255,0.06); margin-top: 4px; overflow: hidden; }
+  .stat-bar-fill { height: 100%; border-radius: 2px; }
+  .task-card {
+    display: flex; gap: 6px; align-items: center; padding: 4px 6px;
+    border-radius: 5px; cursor: pointer; transition: background 0.15s;
+    border-left: 3px solid transparent;
+  }
+  .task-card:hover { background: rgba(255,255,255,0.04); }
+  .task-card .task-info { flex: 1; min-width: 0; }
+  .task-card .task-id { font-size: 10px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .task-card .task-desc { font-size: 8px; color: #3f3f46; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .phase-tag { font-size: 7px; font-weight: 700; padding: 1px 4px; border-radius: 3px; flex-shrink: 0; letter-spacing: 0.3px; text-transform: uppercase; }
+
+  #bottom-bar {
+    position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%); z-index: 10;
+    background: rgba(0,0,0,0.85); backdrop-filter: blur(12px);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 10px; padding: 8px 16px;
+    display: flex; align-items: center; gap: 12px; font-size: 12px;
+  }
+  #bottom-bar .logo { font-weight: 700; font-size: 15px; }
+  #bottom-bar .zero { color: #f59e0b; }
+  #bottom-bar .sep { color: rgba(255,255,255,0.08); }
+  #bottom-bar .stat { color: #52525b; font-size: 11px; }
+  #bottom-bar .stat .n { color: #a1a1aa; font-weight: 600; }
+  .ctrl-btn {
+    background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);
+    color: #71717a; font-family: inherit; font-size: 9px; font-weight: 600;
+    padding: 3px 8px; border-radius: 5px; cursor: pointer;
+    letter-spacing: 0.3px; text-transform: uppercase; transition: all 0.15s;
+  }
+  .ctrl-btn:hover { background: rgba(255,255,255,0.08); color: #e4e4e7; }
+  .ctrl-btn.active { background: rgba(245,158,11,0.12); border-color: rgba(245,158,11,0.25); color: #f59e0b; }
+  #replay-info { font-size: 10px; color: #52525b; min-width: 100px; }
+  #replay-date { color: #a1a1aa; font-weight: 600; }
+  #replay-counter { font-size: 9px; color: #3f3f46; }
+
+  /* Verdict flash overlay */
+  #verdict-flash {
+    position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    z-index: 30; pointer-events: none; opacity: 0; transition: opacity 0.3s;
+    font-size: 12px; padding: 8px 16px; border-radius: 8px;
+    backdrop-filter: blur(8px); max-width: 400px; text-align: center;
+  }
+  #verdict-flash.show { opacity: 1; }
+
+  /* Subtle vignette only — no scanlines, no busy overlays */
+  #vignette {
+    position: fixed; inset: 0; z-index: 4; pointer-events: none;
+    background: radial-gradient(ellipse at center, transparent 50%, rgba(0,0,0,0.35) 100%);
+  }
+</style>
+</head>
+<body>
+
+<div id="vignette"></div>
+<div id="left-panel"></div>
+<div id="verdict-flash"></div>
+<div id="bottom-bar">
+  <span class="logo">b<span class="zero">0</span>b</span>
+  <span class="sep">|</span>
+  <span class="stat"><span class="n" id="s-active">0</span> active</span>
+  <span class="sep">|</span>
+  <span class="stat"><span class="n" id="s-merged">0</span> merged</span>
+  <span class="sep">|</span>
+  <span class="stat"><span class="n" id="s-failed">0</span> failed</span>
+  <span class="sep">|</span>
+  <button class="ctrl-btn" id="replay-btn" onclick="toggleReplay()">Replay</button>
+  <button class="ctrl-btn" id="speed-btn" onclick="cycleSpeed()">1x</button>
+  <span id="replay-info"><span id="replay-date"></span><br><span id="replay-counter"></span></span>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/7.4.2/pixi.min.js"></script>
+<script src="pipeline-data.js"></script>
+<script>
+// ══════════════════════════════════════════════════════════════════════════════
+// CONFIG
+// ══════════════════════════════════════════════════════════════════════════════
+
+const TILE = 32, MAP_W = 20, MAP_H = 13, SCALE = 3;
+
+const STATIONS = {
+  planning:       { x: 3,  y: 3,  label: "Planning",  emoji: "\u{1F4DD}" },
+  plan_review:    { x: 3,  y: 5,  label: "Review",    emoji: "\u{1F440}" },
+  implementing:   { x: 8,  y: 3,  label: "Building",  emoji: "\u{1F528}" },
+  auditing:       { x: 13, y: 3,  label: "Audit",     emoji: "\u{1F50D}" },
+  fixing:         { x: 13, y: 8,  label: "Repair",    emoji: "\u{1F527}" },
+  testing:        { x: 8,  y: 8,  label: "Testing",   emoji: "\u{1F9EA}" },
+  pr_ready:       { x: 3,  y: 8,  label: "Ship",      emoji: "\u{1F680}" },
+  merged:         { x: 17, y: 10, label: "Merged",    emoji: "\u{2705}" },
+  failed:         { x: 2,  y: 10, label: "Failed",    emoji: "\u{274C}" },
+};
+
+// Map non-station phases to visual stations
+const PHASE_MAP = { pr_creating: "pr_ready", needs_split: "failed", killed: "failed", reviewing: "plan_review" };
+function resolveStation(phase) { return STATIONS[PHASE_MAP[phase] || phase] || STATIONS.failed; }
+
+const PHASE_COLORS = {
+  planning: "#a78bfa", plan_review: "#818cf8", implementing: "#f59e0b",
+  auditing: "#06b6d4", fixing: "#f97316", testing: "#22c55e",
+  pr_ready: "#8b5cf6", pr_creating: "#8b5cf6", merged: "#10b981",
+  failed: "#ef4444", killed: "#6b7280", needs_split: "#6b7280", reviewing: "#818cf8",
+};
+const PHASE_LABELS = {
+  planning: "Plan", plan_review: "Review", implementing: "Build",
+  auditing: "Audit", fixing: "Fix", testing: "Test",
+  pr_ready: "PR", pr_creating: "PR", merged: "Merged",
+  failed: "Failed", killed: "Killed", needs_split: "Split", reviewing: "Review",
+};
+
+// ── Data ─────────────────────────────────────────────────────────────────────
+// PIPELINE_TASKS and PIPELINE_TRANSITIONS loaded from pipeline-data.js
+const TASKS = PIPELINE_TASKS;
+const TRANSITIONS = PIPELINE_TRANSITIONS;
+
+// ── Character Roster ─────────────────────────────────────────────────────────
+const ROSTER = [
+  { id: "claude-1", name: "Claude", agentType: "claude", charKey: "f1", color: "#f59e0b", colorHex: 0xf59e0b },
+  { id: "codex-1",  name: "Codex",  agentType: "codex",  charKey: "f4", color: "#06b6d4", colorHex: 0x06b6d4 },
+];
+
+function hashCode(s) {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+  return Math.abs(h);
+}
+function assignChar(taskId, agent) {
+  const pool = ROSTER.filter(r => r.agentType === agent);
+  return pool.length ? pool[hashCode(taskId) % pool.length] : ROSTER[0];
+}
+
+function computeStats() {
+  for (const r of ROSTER) {
+    const my = TASKS.filter(t => assignChar(t.id, t.agent).id === r.id);
+    const m = my.filter(t => t.phase === "merged").length;
+    const f = my.filter(t => t.phase === "failed").length;
+    const a = my.filter(t => !["merged","failed","killed"].includes(t.phase)).length;
+    r.stats = { total: my.length, merged: m, failed: f, active: a,
+      mergeRate: my.length ? Math.round(m / my.length * 100) : 0,
+      avgIter: my.length ? (my.reduce((s,t) => s + t.iteration, 0) / my.length).toFixed(1) : "0",
+    };
+  }
+}
+computeStats();
+
+// ══════════════════════════════════════════════════════════════════════════════
+// PIXI
+// ══════════════════════════════════════════════════════════════════════════════
+
+const app = new PIXI.Application({ width: innerWidth, height: innerHeight, backgroundColor: 0x0a0b0f, antialias: false });
+document.body.insertBefore(app.view, document.getElementById("left-panel"));
+
+const world = new PIXI.Container();
+world.scale.set(SCALE);
+world.sortableChildren = true;
+app.stage.addChild(world);
+
+// ── Donarg Office Tileset (verified IDs from labeled images) ─────────────────
+const donBase = PIXI.BaseTexture.from("donarg-office-32.png", { scaleMode: PIXI.SCALE_MODES.NEAREST });
+const DON_COLS = 16;
+const donTex = [];
+for (let r = 0; r < 32; r++)
+  for (let c = 0; c < DON_COLS; c++)
+    donTex[c + r * DON_COLS] = new PIXI.Texture(donBase, new PIXI.Rectangle(c*32, r*32, 32, 32));
+
+// Verified Donarg tile IDs
+const D = {
+  // Floors
+  FL_BLUEGREY: 128, FL_TAN: 129, FL_LIGHTGREY: 130, FL_TANCHK: 131,
+  FL_GOLD: 132, FL_GOLD2: 133,
+  FL_TAN2: 160, FL_GREYCHK: 161, FL_BLUECHK: 162, FL_WARMTAN: 163,
+  // Desks (top halves — place as objects on top of floor)
+  DESK_WOOD_L: 1, DESK_WOOD_R: 2,
+  DESK_TAN_L: 4, DESK_TAN_R: 5,
+  DESK_GREY_L: 17, DESK_GREY_R: 18,
+  DESK_CREAM_L: 21, DESK_CREAM_R: 22,
+  DESK_COUNTER_L: 9, DESK_COUNTER_R: 10,
+  // Desk fronts
+  DESK_WOOD_FRONT_L: 64, DESK_WOOD_FRONT_R: 65,
+  // Chairs
+  CH_MAROON: 256, CH_DARKRED: 257, CH_PINK: 258, CH_TAN: 259,
+  CH_WHITE: 260, CH_WHITE2: 261, CH_GREY: 262, CH_GREY2: 263,
+  // Computers
+  CRT_CPU_1: 328, CRT_CPU_2: 329, CRT_KB: 330, CRT_DARK: 331,
+  MON_OFF: 332, MON_BLUE: 333,
+  // Bookshelves
+  BKSH_1: 76, BKSH_2: 77, BKSH_3: 78, BKSH_4: 79,
+  BKSH_WOOD_1: 92, BKSH_WOOD_2: 93, BKSH_WOOD_3: 94, BKSH_WOOD_4: 95,
+  // Plants
+  PLANT_POT: 450, PLANT_VASE: 451, PLANT_TALL_1: 452, PLANT_TALL_2: 453,
+  // Boxes
+  BOX_SM: 472, BOX_DBL: 473, BOX_TRIPLE: 475, BOX_LG: 476,
+  // Clocks
+  CLK_BLUE: 320, CLK_RED: 321, CLK_YELLOW: 322,
+  // Paintings (2-tile wide)
+  PAINT_L1: 384, PAINT_R1: 385, PAINT_L2: 386, PAINT_R2: 387, PAINT_SM: 388,
+  // Whiteboards
+  WB_CHALK: 432, WB_BAR: 433, WB_PIE: 434, WB_MULTI: 435,
+  // Laptops
+  LAPTOP_DARK: 393, LAPTOP_LIGHT: 394,
+  // Vending + cooler
+  VENDING: 287, WATER_COOLER: 280,
+  // Folders (tiny colored items)
+  FOLD_GREEN: 344, FOLD_BLUE: 345, FOLD_PINK: 346, FOLD_YELLOW: 350,
+  // Printers
+  PRINTER_1: 443, PRINTER_2: 444,
+  // Windows
+  WINDOW_1: 290, WINDOW_2: 291,
+  // Rugs
+  RUG_BLUE: 480, RUG_TAN: 482,
+  // Cabinets
+  CAB_WOOD: 168, CAB_GLASS: 169,
+  // Coffee cups
+  COFFEE: 334,
+};
+
+// ── Floor (Donarg tiles) ────────────────────────────────────────────────────
+const mapLayer = new PIXI.Container(); mapLayer.zIndex = 0; world.addChild(mapLayer);
+
+function plcD(tid, tx, ty) {
+  if (!donTex[tid]) return;
+  const s = new PIXI.Sprite(donTex[tid]);
+  s.x = tx * TILE; s.y = ty * TILE;
+  mapLayer.addChild(s);
+  return s;
+}
+
+// Floor tiles
+for (let x = 0; x < MAP_W; x++) {
+  for (let y = 0; y < MAP_H; y++) {
+    const isWall = x === 0 || x === MAP_W-1 || y === 0 || y === MAP_H-1;
+    if (isWall) {
+      plcD(D.FL_GREYCHK, x, y); // dark grey border
+    } else {
+      const nearSt = Object.values(STATIONS).some(s => Math.abs(s.x-x) <= 1 && Math.abs(s.y-y) <= 1);
+      if (nearSt) plcD((x+y)%2===0 ? D.FL_GOLD : D.FL_GOLD2, x, y); // warm gold near stations
+      else plcD((x+y)%2===0 ? D.FL_BLUEGREY : D.FL_LIGHTGREY, x, y); // cool corridor
+    }
+  }
+}
+
+// ── Furniture (Donarg tiles placed at stations) ─────────────────────────────
+const furnitureLayer = new PIXI.Container(); furnitureLayer.zIndex = 0.8; world.addChild(furnitureLayer);
+
+function plcF(tid, tx, ty) {
+  if (!donTex[tid]) return;
+  const s = new PIXI.Sprite(donTex[tid]);
+  s.x = tx * TILE; s.y = ty * TILE;
+  furnitureLayer.addChild(s);
+}
+
+// Planning (x:3,y:3) — wood desk + tan chair + clock
+plcF(D.DESK_WOOD_L, 2, 2); plcF(D.DESK_WOOD_R, 3, 2); plcF(D.CH_TAN, 3, 4);
+plcF(D.CLK_BLUE, 2, 1);
+// Review (x:3,y:5) — cream desk + grey chairs
+plcF(D.DESK_CREAM_L, 2, 4); plcF(D.DESK_CREAM_R, 3, 4); plcF(D.CH_GREY, 2, 6); plcF(D.CH_GREY2, 4, 6);
+plcF(D.FOLD_GREEN, 3, 5); plcF(D.FOLD_BLUE, 4, 5);
+// Building (x:8,y:3) — wood desk + white chair + blue monitor + laptop
+plcF(D.DESK_WOOD_L, 7, 2); plcF(D.DESK_WOOD_R, 8, 2); plcF(D.CH_WHITE, 8, 4);
+plcF(D.MON_BLUE, 8, 2); plcF(D.LAPTOP_DARK, 7, 2);
+// Audit (x:13,y:3) — counter desk + grey chair + CRT
+plcF(D.DESK_COUNTER_L, 12, 2); plcF(D.DESK_COUNTER_R, 13, 2); plcF(D.CH_GREY, 13, 4);
+plcF(D.CRT_CPU_1, 13, 2); plcF(D.CRT_KB, 12, 2);
+// Repair (x:13,y:8) — wood front desk + dark red chair + boxes
+plcF(D.DESK_WOOD_FRONT_L, 12, 7); plcF(D.DESK_WOOD_FRONT_R, 13, 7); plcF(D.CH_DARKRED, 13, 9);
+plcF(D.BOX_SM, 14, 7); plcF(D.BOX_SM, 14, 8);
+// Testing (x:8,y:8) — wood desk + pink chair + monitor + whiteboard
+plcF(D.DESK_WOOD_L, 7, 7); plcF(D.DESK_WOOD_R, 8, 7); plcF(D.CH_PINK, 8, 9);
+plcF(D.MON_BLUE, 8, 7); plcF(D.WB_BAR, 9, 7);
+// Ship (x:3,y:8) — grey desk + maroon chair + boxes
+plcF(D.DESK_GREY_L, 2, 7); plcF(D.DESK_GREY_R, 3, 7); plcF(D.CH_MAROON, 3, 9);
+plcF(D.BOX_TRIPLE, 4, 8); plcF(D.BOX_LG, 4, 7);
+// Merged (x:17,y:10) — bookshelves + plant + painting
+plcF(D.BKSH_WOOD_1, 16, 9); plcF(D.BKSH_WOOD_2, 17, 9);
+plcF(D.BKSH_WOOD_3, 16, 10); plcF(D.BKSH_WOOD_4, 17, 10);
+plcF(D.PLANT_TALL_1, 18, 10); plcF(D.PAINT_L1, 16, 8); plcF(D.PAINT_R1, 17, 8);
+plcF(D.COFFEE, 18, 9);
+// Failed (x:2,y:10) — boxes + printer + red clock
+plcF(D.BOX_SM, 1, 9); plcF(D.BOX_DBL, 2, 9); plcF(D.BOX_TRIPLE, 1, 10); plcF(D.BOX_LG, 2, 10);
+plcF(D.PRINTER_1, 3, 10); plcF(D.CLK_RED, 1, 8);
+// Corridor decor
+plcF(D.PLANT_POT, 10, 1); plcF(D.PLANT_VASE, 10, 11);
+plcF(D.VENDING, 18, 5); plcF(D.WATER_COOLER, 18, 6);
+plcF(D.WINDOW_1, 6, 0); plcF(D.WINDOW_2, 11, 0);
+plcF(D.WB_PIE, 15, 1); plcF(D.WB_MULTI, 16, 1);
+plcF(D.PAINT_L2, 5, 0); plcF(D.PAINT_SM, 7, 0);
+plcF(D.RUG_BLUE, 5, 5); plcF(D.RUG_TAN, 10, 5);
+
+// ── Station Glow + Flow + Particles ─────────────────────────────────────────
+const glowLayer = new PIXI.Container(); glowLayer.zIndex = 0.3; world.addChild(glowLayer);
+for (const [ph, st] of Object.entries(STATIONS)) {
+  const c = parseInt((PHASE_COLORS[ph]||"#888").replace("#",""), 16);
+  const glow = new PIXI.Graphics();
+  glow.beginFill(c, 0.04); glow.drawCircle(0,0,TILE*2.5); glow.endFill();
+  glow.beginFill(c, 0.06); glow.drawCircle(0,0,TILE*1.5); glow.endFill();
+  glow.beginFill(c, 0.03); glow.drawCircle(0,0,TILE*3.5); glow.endFill();
+  glow.x = st.x*TILE; glow.y = st.y*TILE; glowLayer.addChild(glow); st._glow = glow;
+}
+
+const flowLayer = new PIXI.Container(); flowLayer.zIndex = 0.5; world.addChild(flowLayer);
+const FLOWS = [["planning","plan_review"],["planning","implementing"],["implementing","auditing"],["auditing","testing"],["auditing","fixing"],["fixing","auditing"],["testing","pr_ready"],["pr_ready","merged"]];
+const flowG = new PIXI.Graphics(); flowG.lineStyle(1, 0xffffff, 0.04);
+for (const [a,b] of FLOWS) { const sa=STATIONS[a], sb=STATIONS[b]; if(sa&&sb){ flowG.moveTo(sa.x*TILE, sa.y*TILE); flowG.lineTo(sb.x*TILE, sb.y*TILE); }}
+flowLayer.addChild(flowG);
+
+const flowDots = [];
+for (const [a,b] of FLOWS) { const sa=STATIONS[a], sb=STATIONS[b]; if(!sa||!sb) continue;
+  const c = parseInt((PHASE_COLORS[a]||"#888").replace("#",""), 16);
+  for (let i=0; i<2; i++) { const dot=new PIXI.Graphics(); dot.beginFill(c,0.4); dot.drawCircle(0,0,1.2); dot.endFill(); dot.beginFill(c,0.15); dot.drawCircle(0,0,2.5); dot.endFill();
+    flowLayer.addChild(dot); flowDots.push({dot, sx:sa.x*TILE, sy:sa.y*TILE, ex:sb.x*TILE, ey:sb.y*TILE, progress:Math.random(), speed:0.15+Math.random()*0.1}); }
+}
+
+const particleLayer = new PIXI.Container(); particleLayer.zIndex = 0.2; world.addChild(particleLayer);
+const particles = [];
+for (let i=0; i<25; i++) { const p=new PIXI.Graphics(); p.beginFill(0xffffff, 0.03+Math.random()*0.05); p.drawCircle(0,0,0.4+Math.random()*0.5); p.endFill();
+  p.x=Math.random()*MAP_W*TILE; p.y=Math.random()*MAP_H*TILE; particleLayer.addChild(p);
+  particles.push({g:p, baseX:p.x, baseY:p.y, driftY:-0.03-Math.random()*0.07, phase:Math.random()*Math.PI*2, speed:0.2+Math.random()*0.3}); }
+
+// ── Station Labels + Badges ─────────────────────────────────────────────────
+const stationLayer = new PIXI.Container(); stationLayer.zIndex = 1; world.addChild(stationLayer);
+
+for (const [ph, st] of Object.entries(STATIONS)) {
+  const c = parseInt((PHASE_COLORS[ph]||"#888").replace("#",""), 16);
+
+  const ring = new PIXI.Graphics(); ring.lineStyle(1, c, 0.08); ring.drawCircle(0,0,TILE*1.2); ring.lineStyle(0);
+  ring.x = st.x*TILE; ring.y = st.y*TILE; stationLayer.addChild(ring); st._ring = ring;
+
+  const desk = new PIXI.Graphics(); desk.beginFill(c, 0); desk.drawRect(-1,-1,2,2); desk.endFill();
+  desk.x = st.x*TILE; desk.y = st.y*TILE; stationLayer.addChild(desk); st._desk = desk;
+
+  // Label: white text with thick black stroke for max contrast on any tile
+  const lbl = new PIXI.Text(`${st.emoji} ${st.label}`, {
+    fontSize: 7, fill: "#ffffff", fontFamily: "'JetBrains Mono', monospace",
+    fontWeight: "bold",
+    stroke: "#000000", strokeThickness: 3,
+    dropShadow: true, dropShadowColor: "#000000", dropShadowDistance: 1, dropShadowBlur: 2, dropShadowAlpha: 0.9,
+  });
+  lbl.anchor.set(0.5, 1); lbl.x = st.x*TILE; lbl.y = st.y*TILE - TILE*0.8;
+  stationLayer.addChild(lbl);
+
+  const badge = new PIXI.Text("", { fontSize: 5, fill: "#71717a", fontFamily: "monospace" });
+  badge.anchor.set(0.5, 0); badge.x = st.x*TILE; badge.y = st.y*TILE + TILE*0.55;
+  stationLayer.addChild(badge);
+  st._badge = badge;
+}
+
+// ── Characters (pixelserial — 4 cols × 8 rows, 4-frame idle+walk) ───────────
+// Row layout: 0-3 = idle (down,left,right,up), 4-7 = walk (down,left,right,up)
+function makeSheet4(imgW) {
+  // For 128×256 pixelserial sprites: 4 frames per direction, we use first 3
+  const w=32, h=32;
+  const dirs = {down:0, left:1, right:2, up:3};
+  const frames = {}, animations = {};
+  for (const [d, dirIdx] of Object.entries(dirs)) {
+    const walkRow = 4 + dirIdx; // walk rows are 4-7
+    const y = walkRow * h;
+    for (let i = 0; i < 3; i++) {
+      const n = `${d}${i||""}`;
+      frames[n] = { frame: { x: i * w, y, w, h }, sourceSize: { w, h }, spriteSourceSize: { x: 0, y: 0 } };
+    }
+    animations[d] = [d, `${d}1`, `${d}2`];
+  }
+  return { frames, animations, meta: { scale: "1" } };
+}
+
+// pixelserial character sheets (each 128×256)
+const CHAR_CONFIGS = {
+  businessman: { sheet: makeSheet4(128), src: "businessman.png" },
+  policeman:   { sheet: makeSheet4(128), src: "policeman.png" },
+};
+
+const charContainer = new PIXI.Container();
+charContainer.zIndex = 3; charContainer.sortableChildren = true;
+world.addChild(charContainer);
+
+const docContainer = new PIXI.Container();
+docContainer.zIndex = 2; docContainer.sortableChildren = true;
+world.addChild(docContainer);
+
+const charSprites = {};
+const taskDocs = {};
+
+async function initCharacters() {
+  for (const r of ROSTER) {
+    // Use pixelserial characters: businessman for claude, policeman for codex
+    const charCfg = r.agentType === "claude" ? CHAR_CONFIGS.businessman : CHAR_CONFIGS.policeman;
+    const charBase = PIXI.BaseTexture.from(charCfg.src, { scaleMode: PIXI.SCALE_MODES.NEAREST });
+    const sheet = new PIXI.Spritesheet(charBase, charCfg.sheet);
+    await sheet.parse();
+
+    const myActive = TASKS.filter(t => assignChar(t.id,t.agent).id === r.id && !["merged","failed","killed"].includes(t.phase));
+    const st = myActive.length ? resolveStation(myActive[0].phase) : STATIONS.planning;
+
+    const ctr = new PIXI.Container();
+    ctr.x = st.x*TILE; ctr.y = st.y*TILE + 10; ctr.zIndex = 10;
+
+    // Strong glow halo so character pops against tiles
+    const halo = new PIXI.Graphics();
+    halo.beginFill(r.colorHex, 0.15); halo.drawCircle(0, 0, 18); halo.endFill();
+    halo.beginFill(r.colorHex, 0.08); halo.drawCircle(0, 0, 28); halo.endFill();
+    halo.beginFill(0x000000, 0.2); halo.drawCircle(0, 0, 20); halo.endFill();
+    ctr.addChild(halo);
+
+    const shadow = new PIXI.Graphics();
+    shadow.beginFill(0x000000, 0.5); shadow.drawEllipse(0, 10, 10, 4); shadow.endFill();
+    ctr.addChild(shadow);
+
+    const anim = new PIXI.AnimatedSprite(sheet.animations.down);
+    anim.anchor.set(0.5, 0.5); anim.animationSpeed = 0.04; anim.play();
+    anim.scale.set(1.15); // slightly larger than tiles for visibility
+    ctr.addChild(anim);
+
+    // Name label — white with black stroke for max contrast
+    const nm = new PIXI.Text(r.name, {
+      fontSize: 6, fill: "#ffffff", fontFamily: "'JetBrains Mono', monospace", fontWeight: "bold",
+      stroke: "#000000", strokeThickness: 2.5,
+    });
+    nm.anchor.set(0.5, 0); nm.position.set(0, 14);
+    ctr.addChild(nm);
+
+    // Bright colored indicator dot
+    const dot = new PIXI.Graphics();
+    dot.beginFill(0x000000, 0.5); dot.drawCircle(0, -20, 6); dot.endFill();
+    dot.beginFill(r.colorHex, 1.0); dot.drawCircle(0, -20, 3.5); dot.endFill();
+    ctr.addChild(dot);
+
+    charContainer.addChild(ctr);
+    charSprites[r.id] = { container: ctr, anim, sheet, rChar: r, walking: false, wp: 0, sx: 0, sy: 0, tx: 0, ty: 0 };
+  }
+}
+
+function initTaskDocs() {
+  // Group tasks by visual station for offset calculation
+  const stationGroups = {};
+  for (const t of TASKS) {
+    const st = resolveStation(t.phase);
+    const key = `${st.x},${st.y}`;
+    if (!stationGroups[key]) stationGroups[key] = [];
+    stationGroups[key].push(t);
+  }
+
+  for (const t of TASKS) {
+    const ch = assignChar(t.id, t.agent);
+    const st = resolveStation(t.phase);
+    const key = `${st.x},${st.y}`;
+    const group = stationGroups[key] || [t];
+    const idx = group.indexOf(t);
+
+    // Arrange in a small grid around the station
+    const cols = Math.ceil(Math.sqrt(group.length));
+    const col = idx % cols, row = Math.floor(idx / cols);
+    const ox = (col - (cols-1)/2) * 9;
+    const oy = (row * 8) - 10;
+
+    const g = new PIXI.Graphics();
+    const dc = ch.colorHex;
+    // Document outer glow
+    g.beginFill(dc, 0.08); g.drawRoundedRect(-6, -5, 12, 10, 3); g.endFill();
+    // Document body
+    g.beginFill(dc, 0.3); g.lineStyle(1, dc, 0.6); g.drawRoundedRect(-4, -3, 8, 6, 1); g.endFill();
+    g.lineStyle(0);
+    // Text lines on document
+    g.beginFill(dc, 0.45); g.drawRect(-2, -1.5, 4, 0.8); g.drawRect(-2, 0.2, 3, 0.8); g.drawRect(-2, 1.8, 3.5, 0.8); g.endFill();
+    // Corner fold
+    g.beginFill(0xffffff, 0.15); g.moveTo(4, -3); g.lineTo(4, -1); g.lineTo(2, -3); g.closePath(); g.endFill();
+    g.x = st.x*TILE + ox; g.y = st.y*TILE + oy;
+    g.zIndex = st.y;
+    g.interactive = true; g.cursor = "pointer";
+    g.on("pointerdown", () => showTaskDetail(t));
+
+    docContainer.addChild(g);
+    taskDocs[t.id] = { g, task: t, moving: false, mp: 0, msx: 0, msy: 0, mtx: 0, mty: 0 };
+  }
+}
+
+// ── Movement ─────────────────────────────────────────────────────────────────
+function walkChar(charId, phase) {
+  const cs = charSprites[charId];
+  if (!cs) return;
+  const st = resolveStation(phase);
+  const tx = st.x*TILE, ty = st.y*TILE + 10;
+  if (Math.abs(tx - cs.container.x) < 2 && Math.abs(ty - cs.container.y) < 2) return;
+  cs.sx = cs.container.x; cs.sy = cs.container.y; cs.tx = tx; cs.ty = ty; cs.wp = 0; cs.walking = true;
+  const dx = tx - cs.sx, dy = ty - cs.sy;
+  const dir = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? "right" : "left") : (dy > 0 ? "down" : "up");
+  const f = cs.sheet.animations[dir];
+  if (f) { cs.anim.textures = f; cs.anim.animationSpeed = 0.1; cs.anim.play(); }
+}
+
+function moveDoc(taskId, phase) {
+  const td = taskDocs[taskId];
+  if (!td) return;
+  const st = resolveStation(phase);
+  // Simple position — we'll refine offsets after
+  td.msx = td.g.x; td.msy = td.g.y;
+  td.mtx = st.x*TILE + (hashCode(taskId) % 5 - 2) * 6;
+  td.mty = st.y*TILE - 10 + (hashCode(taskId + "y") % 3) * 6;
+  td.mp = 0; td.moving = true;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// REPLAY
+// ══════════════════════════════════════════════════════════════════════════════
+
+let replayRunning = false, replayIdx = 0;
+// Speed labels shown on button; interval is handled by the ticker approach
+const SPEED_LABELS = ["1x", "2x", "5x", "10x"];
+const SPEED_WAIT_MS = [2200, 1200, 500, 150]; // min ms between transitions
+let speedIdx = 0;
+let lastStepTime = 0;
+
+function resetReplay() {
+  replayIdx = 0;
+  lastStepTime = 0;
+}
+
+// Called every frame by the ticker
+// Pre-splits transitions into per-character queues so they move independently
+let charQueues = {}; // charId -> [transitions]
+let replayFired = 0; // total transitions fired (for counter display)
+const charLastStep = {}; // charId -> last step timestamp
+
+function buildCharQueues() {
+  charQueues = {};
+  replayFired = 0;
+  for (const tr of TRANSITIONS) {
+    const task = TASKS.find(t => t.id === tr.taskId);
+    if (!task) continue;
+    const ch = assignChar(task.id, task.agent);
+    if (!charQueues[ch.id]) charQueues[ch.id] = [];
+    charQueues[ch.id].push(tr);
+  }
+}
+
+function replayTick() {
+  if (!replayRunning) return;
+
+  const now = performance.now();
+  let stepped = false;
+
+  // Process each character's queue independently
+  for (const [charId, queue] of Object.entries(charQueues)) {
+    if (queue.length === 0) continue;
+
+    const cs = charSprites[charId];
+    if (cs && cs.walking) continue; // this character is still walking — wait
+
+    const tr = queue[0];
+    const task = TASKS.find(t => t.id === tr.taskId);
+    if (!task) { queue.shift(); continue; }
+
+    const td = taskDocs[task.id];
+    if (td && td.moving) continue; // this task's doc is still moving — wait
+
+    // Enforce minimum time since this character's last step
+    const lastTime = charLastStep[charId] || 0;
+    if (now - lastTime < SPEED_WAIT_MS[speedIdx]) continue;
+
+    // Fire this transition
+    queue.shift();
+    replayFired++;
+    charLastStep[charId] = now;
+
+    task.phase = tr.to;
+    if (tr.to === "merged" || tr.to === "failed") task.status = "succeeded";
+
+    walkChar(charId, tr.to);
+    moveDoc(task.id, tr.to);
+
+    if (tr.verdict === "pass" || tr.verdict === "fail") {
+      showVerdict(tr);
+    }
+
+    // Update date display
+    document.getElementById("replay-date").textContent = tr.ts.slice(0, 16).replace("T", " ");
+    document.getElementById("replay-counter").textContent = `${replayFired} / ${TRANSITIONS.length}`;
+    stepped = true;
+  }
+
+  if (stepped) {
+    computeStats();
+    updateUI();
+    updateBadges();
+  }
+
+  // Check if all queues are empty
+  const allDone = Object.values(charQueues).every(q => q.length === 0);
+  if (allDone) {
+    const anyWalking = Object.values(charSprites).some(cs => cs.walking);
+    if (!anyWalking) stopReplay();
+  }
+}
+
+function showVerdict(tr) {
+  const flash = document.getElementById("verdict-flash");
+  const isPass = tr.verdict === "pass";
+  flash.style.background = isPass ? "rgba(16,185,129,0.15)" : "rgba(239,68,68,0.15)";
+  flash.style.border = `1px solid ${isPass ? "rgba(16,185,129,0.3)" : "rgba(239,68,68,0.3)"}`;
+  flash.style.color = isPass ? "#10b981" : "#ef4444";
+  const summary = tr.summary ? `<br><span style="font-size:9px;color:#52525b">${tr.summary.slice(0,120)}${tr.summary.length>120?"...":""}</span>` : "";
+  flash.innerHTML = `${isPass ? "PASS" : "FAIL"} — ${tr.taskId}${summary}`;
+  flash.classList.add("show");
+  setTimeout(() => flash.classList.remove("show"), 1500);
+
+  // Flash the audit station
+  const auditDesk = STATIONS.auditing._desk;
+  if (auditDesk) {
+    const origAlpha = auditDesk.alpha;
+    auditDesk.tint = isPass ? 0x10b981 : 0xef4444;
+    auditDesk.alpha = 1;
+    setTimeout(() => { auditDesk.tint = 0xffffff; auditDesk.alpha = origAlpha; }, 500);
+  }
+}
+
+function toggleReplay() {
+  if (replayRunning) { stopReplay(); return; }
+  // Reset all tasks to pre-replay state
+  for (const t of TASKS) { t.phase = "planning"; t.status = "unknown"; }
+  resetReplay();
+  buildCharQueues();
+  // Reset doc positions — dim them at planning station
+  for (const td of Object.values(taskDocs)) {
+    const st = STATIONS.planning;
+    td.g.x = st.x*TILE; td.g.y = st.y*TILE - 10;
+    td.g.alpha = 0.15;
+  }
+  replayRunning = true;
+  document.getElementById("replay-btn").classList.add("active");
+  document.getElementById("replay-btn").textContent = "Stop";
+  // replayTick is called by the main PIXI ticker — no setInterval needed
+}
+
+function stopReplay() {
+  replayRunning = false;
+  document.getElementById("replay-btn").classList.remove("active");
+  document.getElementById("replay-btn").textContent = "Replay";
+}
+
+function cycleSpeed() {
+  speedIdx = (speedIdx + 1) % SPEED_LABELS.length;
+  document.getElementById("speed-btn").textContent = SPEED_LABELS[speedIdx];
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// TICKER
+// ══════════════════════════════════════════════════════════════════════════════
+
+let elapsed = 0;
+app.ticker.add((delta) => {
+  elapsed += delta / 60;
+
+  // Drive replay from the ticker (not setInterval)
+  replayTick();
+
+  for (const cs of Object.values(charSprites)) {
+    if (cs.walking) {
+      cs.wp += delta / 60 / 0.8; // 0.8s walk duration
+      if (cs.wp >= 1) { cs.wp = 1; cs.walking = false; cs.container.x = cs.tx; cs.container.y = cs.ty;
+        const idle = cs.sheet.animations.down; if(idle){cs.anim.textures=idle;cs.anim.animationSpeed=0.04;cs.anim.play();}
+      } else {
+        const t = cs.wp, e = t<0.5 ? 4*t*t*t : 1-Math.pow(-2*t+2,3)/2;
+        cs.container.x = cs.sx + (cs.tx - cs.sx) * e;
+        cs.container.y = cs.sy + (cs.ty - cs.sy) * e;
+      }
+    } else {
+      cs.anim.y = Math.sin(elapsed*2 + hashCode(cs.rChar.id)) * 1;
+    }
+  }
+
+  for (const td of Object.values(taskDocs)) {
+    if (td.moving) {
+      td.mp += delta / 60 / 0.8;
+      if (td.mp >= 1) { td.mp = 1; td.moving = false; td.g.x = td.mtx; td.g.y = td.mty; td.g.alpha = 1; }
+      else { const t=td.mp, e=t<0.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2; td.g.x=td.msx+(td.mtx-td.msx)*e; td.g.y=td.msy+(td.mty-td.msy)*e; td.g.alpha = 1; }
+    }
+  }
+
+  // Station desk/ring/glow pulse
+  for (const [ph,st] of Object.entries(STATIONS)) {
+    const n = TASKS.filter(t => resolveStation(t.phase) === st && t.status === "unknown").length;
+    const active = n > 0;
+    if (st._desk) st._desk.alpha = active ? 0.7 + Math.sin(elapsed*1.5)*0.25 : 0.3;
+    if (st._ring) {
+      st._ring.alpha = active ? 0.3 + Math.sin(elapsed*2)*0.15 : 0.05;
+      st._ring.scale.set(active ? 1 + Math.sin(elapsed*1.2)*0.03 : 1);
+    }
+    if (st._glow) st._glow.alpha = active ? 0.8 + Math.sin(elapsed*1)*0.2 : 0.3;
+  }
+
+  // Animate flow dots
+  for (const fd of flowDots) {
+    fd.progress += fd.speed * delta / 60;
+    if (fd.progress > 1) fd.progress -= 1;
+    const p = fd.progress;
+    fd.dot.x = fd.sx + (fd.ex - fd.sx) * p;
+    fd.dot.y = fd.sy + (fd.ey - fd.sy) * p;
+    // Fade at endpoints
+    fd.dot.alpha = Math.sin(p * Math.PI) * 0.8;
+  }
+
+  // Animate ambient particles
+  for (const pt of particles) {
+    pt.phase += pt.speed * delta / 60;
+    pt.g.x = pt.baseX + Math.sin(pt.phase) * 8;
+    pt.g.y = pt.baseY + Math.cos(pt.phase * 0.7) * 5 + pt.driftY * elapsed * 3;
+    pt.g.alpha = 0.05 + Math.sin(pt.phase * 0.5) * 0.05;
+    // Wrap around
+    if (pt.g.y < 0) { pt.g.y = MAP_H * TILE; pt.baseY = pt.g.y; }
+    if (pt.g.y > MAP_H * TILE) { pt.g.y = 0; pt.baseY = 0; }
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// UI
+// ══════════════════════════════════════════════════════════════════════════════
+
+function updateBadges() {
+  for (const [ph,st] of Object.entries(STATIONS)) {
+    const n = TASKS.filter(t => resolveStation(t.phase) === st).length;
+    if (st._badge) st._badge.text = n > 0 ? String(n) : "";
+  }
+}
+
+function showTaskDetail(task) {
+  // TODO: popup — for now just highlight in panel
+  document.querySelectorAll(".task-card").forEach(c => c.style.background = "");
+  const card = document.querySelector(`[data-task="${task.id}"]`);
+  if (card) { card.style.background = "rgba(255,255,255,0.08)"; card.scrollIntoView({ block: "nearest" }); }
+}
+
+function updateUI() {
+  const panel = document.getElementById("left-panel");
+  let html = "";
+
+  // Agents
+  html += `<div class="panel-section"><div class="panel-title">Agents</div>`;
+  for (const r of ROSTER) {
+    const s = r.stats;
+    html += `<div class="char-card">
+      <div style="width:28px;height:28px;border-radius:6px;background:${r.color}10;border:2px solid ${r.color}25;display:flex;align-items:center;justify-content:center;font-size:14px">${r.agentType==="claude"?"\u{1F916}":"\u26A1"}</div>
+      <div class="char-info">
+        <div class="char-name" style="color:${r.color}">${r.name}</div>
+        <div class="stat-row">
+          <span><span class="sv" style="color:#10b981">${s.merged}</span> <span class="sl">merged</span></span>
+          <span><span class="sv" style="color:#ef4444">${s.failed}</span> <span class="sl">failed</span></span>
+          <span><span class="sv">${s.active}</span> <span class="sl">active</span></span>
+        </div>
+        <div class="stat-bar"><div class="stat-bar-fill" style="width:${s.mergeRate}%;background:${r.color}"></div></div>
+        <div class="char-stat">${s.mergeRate}% merge · ${s.avgIter} avg iter · ${s.total} total</div>
+      </div>
+    </div>`;
+  }
+  html += `</div>`;
+
+  // Active tasks
+  const active = TASKS.filter(t => !["merged","failed","killed"].includes(t.phase));
+  if (active.length) {
+    html += `<div class="panel-section"><div class="panel-title">Active (${active.length})</div>`;
+    for (const t of active) {
+      const c = PHASE_COLORS[t.phase] || "#888";
+      const ch = assignChar(t.id, t.agent);
+      html += `<div class="task-card" data-task="${t.id}" style="border-left-color:${ch.color}" onclick="showTaskDetail(TASKS.find(x=>x.id==='${t.id}'))">
+        <div class="task-info"><div class="task-id" style="color:${ch.color}">${t.id}</div><div class="task-desc">${t.desc}</div></div>
+        <span style="font-size:8px;color:#3f3f46">${t.iteration}/${t.maxIter}</span>
+        <span class="phase-tag" style="color:${c};background:${c}12;border:1px solid ${c}25">${PHASE_LABELS[t.phase]||t.phase}</span>
+      </div>`;
+    }
+    html += `</div>`;
+  }
+
+  // Merged
+  const merged = TASKS.filter(t => t.phase === "merged");
+  if (merged.length) {
+    html += `<div class="panel-section"><div class="panel-title">Merged (${merged.length})</div>`;
+    for (const t of merged.slice(0, 15)) {
+      const ch = assignChar(t.id, t.agent);
+      html += `<div class="task-card" data-task="${t.id}" style="border-left-color:${ch.color};opacity:0.5">
+        <div class="task-info"><div class="task-id">${t.id}</div><div class="task-desc">${t.desc}</div></div>
+        ${t.prNumber ? `<span style="font-size:8px;color:#10b981">#${t.prNumber}</span>` : ""}
+      </div>`;
+    }
+    if (merged.length > 15) html += `<div style="font-size:9px;color:#3f3f46;padding:4px">+${merged.length-15} more</div>`;
+    html += `</div>`;
+  }
+
+  // Failed
+  const failed = TASKS.filter(t => t.phase === "failed" || t.phase === "killed");
+  if (failed.length) {
+    html += `<div class="panel-section"><div class="panel-title">Failed (${failed.length})</div>`;
+    for (const t of failed.slice(0, 10)) {
+      const ch = assignChar(t.id, t.agent);
+      html += `<div class="task-card" data-task="${t.id}" style="border-left-color:#ef4444;opacity:0.4">
+        <div class="task-info"><div class="task-id">${t.id}</div><div class="task-desc">${t.desc}</div></div>
+        <span style="font-size:8px;color:#3f3f46">${t.iteration}/${t.maxIter}</span>
+      </div>`;
+    }
+    html += `</div>`;
+  }
+
+  panel.innerHTML = html;
+
+  document.getElementById("s-active").textContent = active.length;
+  document.getElementById("s-merged").textContent = merged.length;
+  document.getElementById("s-failed").textContent = failed.length;
+}
+
+// ── Camera ───────────────────────────────────────────────────────────────────
+world.x = (innerWidth - MAP_W*TILE*SCALE) / 2;
+world.y = (innerHeight - MAP_H*TILE*SCALE) / 2;
+
+let dragging=false, ds={x:0,y:0}, ws={x:0,y:0};
+app.view.addEventListener("pointerdown", e => { dragging=true; ds={x:e.clientX,y:e.clientY}; ws={x:world.x,y:world.y}; });
+app.view.addEventListener("pointermove", e => { if(!dragging) return; world.x=ws.x+(e.clientX-ds.x); world.y=ws.y+(e.clientY-ds.y); });
+app.view.addEventListener("pointerup", ()=>dragging=false);
+app.view.addEventListener("pointerleave", ()=>dragging=false);
+app.view.addEventListener("wheel", e => {
+  e.preventDefault();
+  const f=e.deltaY>0?0.92:1.08, ns=Math.max(1.5,Math.min(7,world.scale.x*f));
+  const mx=e.clientX, my=e.clientY, wx=(mx-world.x)/world.scale.x, wy=(my-world.y)/world.scale.y;
+  world.scale.set(ns); world.x=mx-wx*ns; world.y=my-wy*ns;
+}, {passive:false});
+
+// ── Init ─────────────────────────────────────────────────────────────────────
+initCharacters().then(() => { initTaskDocs(); updateUI(); updateBadges(); });
+addEventListener("resize", () => app.renderer.resize(innerWidth, innerHeight));
+</script>
+</body>
+</html>

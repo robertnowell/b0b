@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>b0b world — terminal</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0a0a0a; overflow: hidden; font-family: 'SF Mono', 'JetBrains Mono', 'Courier New', monospace; }
+  canvas { display: block; }
+  #overlay {
+    position: fixed; top: 16px; left: 16px; z-index: 10;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .agent-card {
+    background: rgba(0,0,0,0.85); backdrop-filter: blur(8px);
+    border: 1px solid rgba(0,255,100,0.15);
+    border-radius: 4px; padding: 8px 12px;
+    color: #33ff77; font-size: 12px;
+    display: flex; gap: 10px; align-items: center;
+    min-width: 260px; font-family: inherit;
+  }
+  .agent-card .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .agent-card .name { font-weight: 600; font-size: 12px; }
+  .agent-card .task { color: #227744; font-size: 10px; margin-top: 2px; }
+  .agent-card .phase {
+    font-size: 9px; font-weight: 600; padding: 2px 6px;
+    border-radius: 3px; margin-left: auto; letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+  #title-bar {
+    position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); z-index: 10;
+    background: rgba(0,0,0,0.85);
+    border: 1px solid rgba(0,255,100,0.2);
+    border-radius: 4px; padding: 8px 16px;
+    color: #33ff77; font-size: 13px;
+    display: flex; align-items: center; gap: 12px;
+    font-family: inherit;
+  }
+  #title-bar .b0b { font-weight: 700; font-size: 15px; color: #00ff66; }
+  #title-bar .zero { color: #ffaa00; }
+  #title-bar .sep { color: rgba(0,255,100,0.3); }
+  #title-bar .stat { color: #227744; }
+  #title-bar .stat .n { color: #33ff77; font-weight: 600; }
+  #title-bar .tag { font-size: 10px; color: #115533; font-style: italic; }
+  /* CRT scanline overlay */
+  #scanlines {
+    position: fixed; inset: 0; z-index: 5; pointer-events: none;
+    background: repeating-linear-gradient(
+      0deg,
+      rgba(0,0,0,0.15) 0px,
+      rgba(0,0,0,0.15) 1px,
+      transparent 1px,
+      transparent 3px
+    );
+  }
+  #vignette {
+    position: fixed; inset: 0; z-index: 4; pointer-events: none;
+    background: radial-gradient(ellipse at center, transparent 50%, rgba(0,0,0,0.6) 100%);
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="scanlines"></div>
+<div id="vignette"></div>
+<div id="overlay"></div>
+<div id="title-bar">
+  <span class="b0b">b<span class="zero">0</span>b</span>
+  <span class="tag">terminal</span>
+  <span class="sep">|</span>
+  <span class="stat"><span class="n">5</span> active</span>
+  <span class="sep">|</span>
+  <span class="stat"><span class="n">1</span> merged</span>
+  <span class="sep">|</span>
+  <span class="stat"><span class="n">2</span> failed</span>
+</div>
+
+<script>
+const AGENTS = [
+  { id: "onboarding-flow-002", agent: "codex", phase: "planning", status: "unknown", desc: "Redesign onboarding flow" },
+  { id: "lazy-images-003", agent: "claude", phase: "implementing", status: "unknown", desc: "Lazy load images in preview" },
+  { id: "template-crash-004", agent: "codex", phase: "auditing", status: "unknown", desc: "Fix template crash" },
+  { id: "analytics-dash-005", agent: "claude", phase: "testing", status: "unknown", desc: "Campaign analytics dashboard" },
+  { id: "font-loading-006", agent: "codex", phase: "pr_ready", status: "unknown", desc: "Fix font loading race" },
+  { id: "inspo-alert-001", agent: "claude", phase: "merged", status: "succeeded", desc: "Image URL in Slack alerts" },
+  { id: "broken-email-001", agent: "claude", phase: "failed", status: "succeeded", desc: "Broken email + missing alert" },
+];
+
+const PHASE_COLORS = {
+  planning: "#a78bfa", implementing: "#f59e0b", auditing: "#06b6d4",
+  testing: "#22c55e", pr_ready: "#8b5cf6", merged: "#10b981", failed: "#ef4444",
+};
+
+// ── Dungeon Map (ASCII) ────────────────────────────
+// P=Planning, B=Build, A=Audit, T=Test, R=PR, M=Merged, F=Failed
+// #=wall, .=floor, +=door, ~=corridor
+const MAP_STR = `
+################################################################################
+#..........#..........#..........#..........#..........#..........#.............#
+#..........#..........#..........#..........#..........#..........#.............#
+#..PLAN....+~~~~~~~~~~+..BUILD..+~~~~~~~~~~+..AUDIT..+~~~~~~~~~~+...MERGED....#
+#..........#..........#..........#..........#..........#..........#.............#
+#..........#..........#..........#..........#..........#..........#.............#
+######+#####..........######+#####..........######+#####..........#.............#
+......~...................~...................~.........................#.........#
+......~...................~...................~.........................#.........#
+######+#####..........######+#####..........######+############################
+#..........#..........#..........#..........#..........#
+#..........#..........#..........#..........#..........#
+#..FAIL....+~~~~~~~~~~+...TEST..+~~~~~~~~~~+....PR....#
+#..........#..........#..........#..........#..........#
+#..........#..........#..........#..........#..........#
+############..........############..........############
+`.trim().split("\n");
+
+const CELL_SIZE = 14;
+const MAP_H = MAP_STR.length;
+const MAP_W = Math.max(...MAP_STR.map(r => r.length));
+
+// Station centers (col, row) — rooms
+const STATION_POS = {
+  planning:     { col: 5, row: 3 },
+  implementing: { col: 27, row: 3 },
+  auditing:     { col: 49, row: 3 },
+  merged:       { col: 69, row: 3 },
+  testing:      { col: 27, row: 12 },
+  pr_ready:     { col: 49, row: 12 },
+  failed:       { col: 5, row: 12 },
+};
+
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+let W, H;
+
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+}
+resize();
+window.addEventListener("resize", resize);
+
+// Camera (pan/zoom)
+let camX = -W / 2 + 40 * CELL_SIZE / 2;
+let camY = -H / 2 + 8 * CELL_SIZE;
+let zoom = 1.5;
+let dragging = false;
+let dragStart = { x: 0, y: 0 };
+let camStart = { x: 0, y: 0 };
+
+canvas.addEventListener("pointerdown", e => {
+  dragging = true;
+  dragStart = { x: e.clientX, y: e.clientY };
+  camStart = { x: camX, y: camY };
+});
+canvas.addEventListener("pointermove", e => {
+  if (!dragging) return;
+  camX = camStart.x - (e.clientX - dragStart.x) / zoom;
+  camY = camStart.y - (e.clientY - dragStart.y) / zoom;
+});
+canvas.addEventListener("pointerup", () => dragging = false);
+canvas.addEventListener("pointerleave", () => dragging = false);
+canvas.addEventListener("wheel", e => {
+  e.preventDefault();
+  zoom = Math.max(0.5, Math.min(4, zoom * (e.deltaY > 0 ? 0.9 : 1.1)));
+}, { passive: false });
+
+// Assign agents to grid positions
+const agentsByPhase = {};
+AGENTS.forEach(a => {
+  if (!agentsByPhase[a.phase]) agentsByPhase[a.phase] = [];
+  agentsByPhase[a.phase].push(a);
+});
+
+const agentPositions = [];
+Object.entries(agentsByPhase).forEach(([phase, agents]) => {
+  const station = STATION_POS[phase];
+  if (!station) return;
+  agents.forEach((agent, i) => {
+    agentPositions.push({
+      ...agent,
+      col: station.col + (i - (agents.length - 1) / 2) * 2,
+      row: station.row,
+      glyph: agent.agent === "claude" ? "@" : "&",
+    });
+  });
+});
+
+// ── Render Loop ────────────────────────────────────
+let frame = 0;
+function render() {
+  requestAnimationFrame(render);
+  frame++;
+  const t = frame / 60;
+
+  ctx.fillStyle = "#0a0a0a";
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.save();
+  ctx.translate(W / 2, H / 2);
+  ctx.scale(zoom, zoom);
+  ctx.translate(-camX - W / 2, -camY - H / 2);
+
+  // Draw map
+  for (let row = 0; row < MAP_H; row++) {
+    const line = MAP_STR[row] || "";
+    for (let col = 0; col < line.length; col++) {
+      const ch = line[col];
+      const sx = col * CELL_SIZE;
+      const sy = row * CELL_SIZE;
+
+      if (ch === "#") {
+        ctx.fillStyle = "#1a2a1a";
+        ctx.fillRect(sx, sy, CELL_SIZE, CELL_SIZE);
+        ctx.strokeStyle = "#0d1a0d";
+        ctx.lineWidth = 0.5;
+        ctx.strokeRect(sx, sy, CELL_SIZE, CELL_SIZE);
+      } else if (ch === "." || ch === "+" || ch === "~") {
+        ctx.fillStyle = ch === "~" ? "#0d120d" : "#0f170f";
+        ctx.fillRect(sx, sy, CELL_SIZE, CELL_SIZE);
+        // Subtle grid dot
+        ctx.fillStyle = "rgba(0,255,100,0.03)";
+        ctx.fillRect(sx + CELL_SIZE / 2 - 0.5, sy + CELL_SIZE / 2 - 0.5, 1, 1);
+      }
+    }
+  }
+
+  // Draw station labels
+  Object.entries(STATION_POS).forEach(([phase, pos]) => {
+    const color = PHASE_COLORS[phase];
+    const hasActive = AGENTS.some(a => a.phase === phase && a.status === "unknown");
+    const sx = pos.col * CELL_SIZE;
+    const sy = (pos.row - 2) * CELL_SIZE;
+
+    // Room glow
+    if (hasActive) {
+      const glowR = 5 * CELL_SIZE;
+      const grad = ctx.createRadialGradient(sx, pos.row * CELL_SIZE, 0, sx, pos.row * CELL_SIZE, glowR);
+      grad.addColorStop(0, color + "18");
+      grad.addColorStop(1, "transparent");
+      ctx.fillStyle = grad;
+      ctx.fillRect(sx - glowR, pos.row * CELL_SIZE - glowR, glowR * 2, glowR * 2);
+    }
+
+    // Label
+    ctx.font = `bold ${CELL_SIZE * 0.7}px monospace`;
+    ctx.fillStyle = hasActive ? color : color + "60";
+    ctx.textAlign = "center";
+    ctx.fillText(phase.toUpperCase().replace("_", " "), sx, sy);
+  });
+
+  // Draw agents
+  agentPositions.forEach((agent) => {
+    const sx = agent.col * CELL_SIZE;
+    const sy = agent.row * CELL_SIZE;
+    const isClaude = agent.agent === "claude";
+    const isActive = agent.status === "unknown";
+    const agentColor = isClaude ? "#f59e0b" : "#06b6d4";
+    const phaseColor = PHASE_COLORS[agent.phase];
+
+    // Agent glow
+    if (isActive) {
+      const pulse = 0.5 + Math.sin(t * 3 + agent.col) * 0.3;
+      const grad = ctx.createRadialGradient(sx, sy, 0, sx, sy, CELL_SIZE * 2);
+      grad.addColorStop(0, agentColor + Math.floor(pulse * 40).toString(16).padStart(2, "0"));
+      grad.addColorStop(1, "transparent");
+      ctx.fillStyle = grad;
+      ctx.fillRect(sx - CELL_SIZE * 2, sy - CELL_SIZE * 2, CELL_SIZE * 4, CELL_SIZE * 4);
+    }
+
+    // The glyph character
+    const bob = isActive ? Math.sin(t * 2.5 + agent.col * 0.5) * 2 : 0;
+    ctx.font = `bold ${CELL_SIZE * 1.4}px monospace`;
+    ctx.fillStyle = agentColor;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.shadowColor = agentColor;
+    ctx.shadowBlur = isActive ? 8 : 2;
+    ctx.fillText(agent.glyph, sx, sy + bob);
+    ctx.shadowBlur = 0;
+
+    // Phase indicator dot
+    if (isActive) {
+      const dotPulse = 0.6 + Math.sin(t * 4 + agent.col) * 0.4;
+      ctx.beginPath();
+      ctx.arc(sx, sy - CELL_SIZE, 3, 0, Math.PI * 2);
+      ctx.fillStyle = phaseColor;
+      ctx.globalAlpha = dotPulse;
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+
+    // Name label below
+    ctx.font = `${CELL_SIZE * 0.55}px monospace`;
+    ctx.fillStyle = isActive ? agentColor + "cc" : agentColor + "55";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
+    ctx.fillText(isClaude ? "CLAUDE" : "CODEX", sx, sy + CELL_SIZE * 0.8);
+
+    // Activity text (typing effect for active agents)
+    if (isActive) {
+      const chars = "▓░▒█▓░▒";
+      const typingLen = Math.floor(t * 4 + agent.col * 3) % 8;
+      const typing = chars.substring(0, typingLen);
+      ctx.font = `${CELL_SIZE * 0.45}px monospace`;
+      ctx.fillStyle = phaseColor + "88";
+      ctx.fillText(typing, sx, sy + CELL_SIZE * 1.5);
+    }
+  });
+
+  // Flickering cursor in random spots
+  if (Math.random() < 0.02) {
+    const cx = Math.floor(Math.random() * 60) * CELL_SIZE;
+    const cy = Math.floor(Math.random() * MAP_H) * CELL_SIZE;
+    ctx.fillStyle = "rgba(0,255,100,0.15)";
+    ctx.fillRect(cx, cy, CELL_SIZE * 0.6, CELL_SIZE);
+  }
+
+  ctx.restore();
+}
+render();
+
+// ── Overlay UI ─────────────────────────────────────
+const overlay = document.getElementById("overlay");
+const activeAgents = AGENTS.filter(a => a.status === "unknown");
+overlay.innerHTML = activeAgents.map(a => {
+  const color = PHASE_COLORS[a.phase];
+  const agentColor = a.agent === "claude" ? "#f59e0b" : "#06b6d4";
+  return `<div class="agent-card">
+    <div class="dot" style="background:${agentColor};box-shadow:0 0 8px ${agentColor}"></div>
+    <div>
+      <div class="name" style="color:${agentColor}">${a.agent === "claude" ? "Claude" : "Codex"}</div>
+      <div class="task">${a.desc}</div>
+    </div>
+    <div class="phase" style="color:${color};background:${color}15;border:1px solid ${color}30">${a.phase.toUpperCase()}</div>
+  </div>`;
+}).join("");
+</script>
+</body>
+</html>
