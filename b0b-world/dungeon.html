@@ -1,0 +1,891 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>b0b world — the cavern</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0D1419; overflow: hidden; font-family: 'JetBrains Mono', monospace; color: #e4e4e7; }
+  canvas { display: block; image-rendering: pixelated; cursor: grab; }
+  canvas:active { cursor: grabbing; }
+
+  #left-panel {
+    position: fixed; top: 12px; left: 12px; z-index: 10;
+    display: flex; flex-direction: column; gap: 6px;
+    max-height: calc(100vh - 80px); overflow-y: auto; width: 260px;
+    scrollbar-width: thin; scrollbar-color: #2a2a3a transparent;
+  }
+  .panel-section { background: rgba(0,0,0,0.88); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; padding: 10px 12px; }
+  .panel-title { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: #52525b; margin-bottom: 6px; }
+  .char-card { display: flex; gap: 10px; align-items: center; padding: 6px; border-radius: 6px; }
+  .char-card .char-info { flex: 1; }
+  .char-card .char-name { font-weight: 700; font-size: 13px; }
+  .char-card .char-stat { font-size: 9px; color: #52525b; margin-top: 2px; }
+  .stat-row { display: flex; gap: 12px; margin-top: 3px; }
+  .stat-row .sv { font-size: 10px; font-weight: 600; }
+  .stat-row .sl { font-size: 9px; color: #52525b; }
+  .stat-bar { height: 3px; border-radius: 2px; background: rgba(255,255,255,0.06); margin-top: 4px; overflow: hidden; }
+  .stat-bar-fill { height: 100%; border-radius: 2px; }
+  .task-card { display: flex; gap: 6px; align-items: center; padding: 4px 6px; border-radius: 5px; cursor: pointer; transition: background 0.15s; border-left: 3px solid transparent; }
+  .task-card:hover { background: rgba(255,255,255,0.04); }
+  .task-card .task-info { flex: 1; min-width: 0; }
+  .task-card .task-id { font-size: 10px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .task-card .task-desc { font-size: 8px; color: #3f3f46; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .phase-tag { font-size: 7px; font-weight: 700; padding: 1px 4px; border-radius: 3px; flex-shrink: 0; letter-spacing: 0.3px; text-transform: uppercase; }
+
+  #bottom-bar {
+    position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%); z-index: 10;
+    background: rgba(0,0,0,0.9); backdrop-filter: blur(12px);
+    border: 1px solid rgba(255,255,255,0.06); border-radius: 10px; padding: 8px 16px;
+    display: flex; align-items: center; gap: 12px; font-size: 12px;
+  }
+  #bottom-bar .logo { font-weight: 700; font-size: 15px; }
+  #bottom-bar .zero { color: #f59e0b; }
+  #bottom-bar .sep { color: rgba(255,255,255,0.08); }
+  #bottom-bar .stat { color: #52525b; font-size: 11px; }
+  #bottom-bar .stat .n { color: #a1a1aa; font-weight: 600; }
+  .ctrl-btn { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); color: #71717a; font-family: inherit; font-size: 9px; font-weight: 600; padding: 3px 8px; border-radius: 5px; cursor: pointer; letter-spacing: 0.3px; text-transform: uppercase; transition: all 0.15s; }
+  .ctrl-btn:hover { background: rgba(255,255,255,0.08); color: #e4e4e7; }
+  .ctrl-btn.active { background: rgba(245,158,11,0.12); border-color: rgba(245,158,11,0.25); color: #f59e0b; }
+
+  #verdict-flash {
+    position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    z-index: 30; pointer-events: none; opacity: 0; transition: opacity 0.3s;
+    font-size: 12px; padding: 8px 16px; border-radius: 8px;
+    backdrop-filter: blur(8px); max-width: 400px; text-align: center;
+  }
+  #verdict-flash.show { opacity: 1; }
+
+  /* Heavy vignette for cavern feel */
+  #vignette {
+    position: fixed; inset: 0; z-index: 4; pointer-events: none;
+    background: radial-gradient(ellipse at center, transparent 25%, rgba(0,0,0,0.6) 65%, rgba(0,0,0,0.85) 100%);
+  }
+</style>
+</head>
+<body>
+
+<div id="vignette"></div>
+<div id="left-panel"></div>
+<div id="verdict-flash"></div>
+<div id="bottom-bar">
+  <span class="logo">b<span class="zero">0</span>b</span>
+  <span class="sep">|</span>
+  <span class="stat"><span class="n" id="s-active">0</span> active</span>
+  <span class="sep">|</span>
+  <span class="stat"><span class="n" id="s-merged">0</span> merged</span>
+  <span class="sep">|</span>
+  <span class="stat"><span class="n" id="s-failed">0</span> failed</span>
+  <span class="sep">|</span>
+  <button class="ctrl-btn" id="replay-btn" onclick="toggleReplay()">Replay</button>
+  <button class="ctrl-btn" id="speed-btn" onclick="cycleSpeed()">1x</button>
+  <span style="font-size:10px;color:#52525b;min-width:100px"><span id="replay-date"></span><br><span id="replay-counter"></span></span>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/7.4.2/pixi.min.js"></script>
+<script src="pipeline-data.js"></script>
+<script>
+// ══════════════════════════════════════════════════════════════════════════════
+// CONFIG — THE CAVERN
+// ══════════════════════════════════════════════════════════════════════════════
+
+const TILE = 32;
+// Vast cavern: rendered area 80x60, but void extends 1000 tiles in every direction
+const MAP_W = 80, MAP_H = 60;
+const VOID_EXTENT = 1000; // tiles of darkness beyond the rendered area
+const SCALE = 2;
+
+// Office area: 24x20 block centered in 80x60
+const OX = 28, OY = 20;
+const OFF_W = 24, OFF_H = 20;
+
+// Stations — 3×3 grid, 8 cols apart, 6 rows apart
+const STATIONS = {
+  planning:     { x: OX+4,  y: OY+4,  label: "Planning",  emoji: "\u{1F4DD}" },
+  plan_review:  { x: OX+12, y: OY+4,  label: "Review",    emoji: "\u{1F440}" },
+  implementing: { x: OX+20, y: OY+4,  label: "Building",  emoji: "\u{1F528}" },
+  auditing:     { x: OX+4,  y: OY+10, label: "Audit",     emoji: "\u{1F50D}" },
+  testing:      { x: OX+12, y: OY+10, label: "Testing",   emoji: "\u{1F9EA}" },
+  fixing:       { x: OX+20, y: OY+10, label: "Repair",    emoji: "\u{1F527}" },
+  pr_ready:     { x: OX+4,  y: OY+16, label: "PR Ready",   emoji: "\u{1F680}" },
+  failed:       { x: OX+12, y: OY+16, label: "Failed",    emoji: "\u{274C}" },
+  merged:       { x: OX+20, y: OY+16, label: "Merged",    emoji: "\u{2705}" },
+};
+
+const PHASE_MAP = { pr_creating: "pr_ready", needs_split: "failed", killed: "failed", reviewing: "plan_review" };
+function resolveStation(phase) { return STATIONS[PHASE_MAP[phase] || phase] || STATIONS.failed; }
+
+const PHASE_COLORS = {
+  planning: "#a78bfa", plan_review: "#818cf8", implementing: "#f59e0b",
+  auditing: "#06b6d4", fixing: "#f97316", testing: "#22c55e",
+  pr_ready: "#8b5cf6", pr_creating: "#8b5cf6", merged: "#10b981",
+  failed: "#ef4444", killed: "#6b7280", needs_split: "#6b7280", reviewing: "#818cf8",
+};
+const PHASE_LABELS = {
+  planning: "Plan", plan_review: "Review", implementing: "Build",
+  auditing: "Audit", fixing: "Fix", testing: "Test",
+  pr_ready: "PR", pr_creating: "PR", merged: "Merged",
+  failed: "Failed", killed: "Killed", needs_split: "Split", reviewing: "Review",
+};
+
+// ── Data ─────────────────────────────────────────────────────────────────────
+const TASKS = PIPELINE_TASKS;
+const TRANSITIONS = PIPELINE_TRANSITIONS;
+
+const ROSTER = [
+  // Claude agents (6 — splits ~61 tasks across 6 characters for parallel movement)
+  { id: "claude-1", name: "Ada",    agentType: "claude", color: "#f59e0b", colorHex: 0xf59e0b },
+  { id: "claude-2", name: "Grace",  agentType: "claude", color: "#fbbf24", colorHex: 0xfbbf24 },
+  { id: "claude-3", name: "Hedy",   agentType: "claude", color: "#f97316", colorHex: 0xf97316 },
+  { id: "claude-4", name: "Marian", agentType: "claude", color: "#fb923c", colorHex: 0xfb923c },
+  { id: "claude-5", name: "Radia",  agentType: "claude", color: "#d97706", colorHex: 0xd97706 },
+  { id: "claude-6", name: "Sophie", agentType: "claude", color: "#ea580c", colorHex: 0xea580c },
+  // Codex agents (2)
+  { id: "codex-1",  name: "Alan",   agentType: "codex",  color: "#06b6d4", colorHex: 0x06b6d4 },
+  { id: "codex-2",  name: "Dennis", agentType: "codex",  color: "#22d3ee", colorHex: 0x22d3ee },
+];
+
+function hashCode(s) { let h=0; for(let i=0;i<s.length;i++) h=((h<<5)-h+s.charCodeAt(i))|0; return Math.abs(h); }
+function assignChar(taskId, agent) { const pool=ROSTER.filter(r=>r.agentType===agent); return pool.length?pool[hashCode(taskId)%pool.length]:ROSTER[0]; }
+
+function computeStats() {
+  for (const r of ROSTER) {
+    const my = TASKS.filter(t => assignChar(t.id,t.agent).id === r.id);
+    const m = my.filter(t => t.phase === "merged").length;
+    const f = my.filter(t => t.phase === "failed").length;
+    const a = my.filter(t => !["merged","failed","killed"].includes(t.phase)).length;
+    r.stats = { total: my.length, merged: m, failed: f, active: a,
+      mergeRate: my.length ? Math.round(m / my.length * 100) : 0,
+      avgIter: my.length ? (my.reduce((s,t) => s + t.iteration, 0) / my.length).toFixed(1) : "0",
+    };
+  }
+}
+computeStats();
+for (const r of ROSTER) r.score = 0;
+
+// ══════════════════════════════════════════════════════════════════════════════
+// PIXI
+// ══════════════════════════════════════════════════════════════════════════════
+
+const app = new PIXI.Application({ width: innerWidth, height: innerHeight, backgroundColor: 0x0D1419, antialias: false });
+document.body.insertBefore(app.view, document.getElementById("left-panel"));
+
+const world = new PIXI.Container();
+world.scale.set(SCALE);
+world.sortableChildren = true;
+app.stage.addChild(world);
+
+// ── Infinite dark green carpet — extends 1000 tiles in every direction ──────
+const voidRect = new PIXI.Graphics();
+voidRect.beginFill(0x0D1419);
+voidRect.drawRect(
+  -VOID_EXTENT * TILE, -VOID_EXTENT * TILE,
+  (MAP_W + VOID_EXTENT * 2) * TILE, (MAP_H + VOID_EXTENT * 2) * TILE
+);
+voidRect.endFill();
+voidRect.zIndex = -10;
+world.addChild(voidRect);
+
+// ── Donarg Office Tileset (32x32, for furniture) ────────────────────────────
+const donBase = PIXI.BaseTexture.from("donarg-office-32.png", { scaleMode: PIXI.SCALE_MODES.NEAREST });
+const DON_COLS = 16;
+const donTex = [];
+for (let r = 0; r < 32; r++)
+  for (let c = 0; c < DON_COLS; c++)
+    donTex[c + r * DON_COLS] = new PIXI.Texture(donBase, new PIXI.Rectangle(c*32, r*32, 32, 32));
+
+// ── Magecity Tileset (32x32, for cave floor/walls/cobblestone) ──────────────
+const magBase = PIXI.BaseTexture.from("magecity.png", { scaleMode: PIXI.SCALE_MODES.NEAREST });
+const MAG_COLS = 8;
+const magTex = [];
+for (let r = 0; r < 45; r++)
+  for (let c = 0; c < MAG_COLS; c++)
+    magTex[c + r * MAG_COLS] = new PIXI.Texture(magBase, new PIXI.Rectangle(c*32, r*32, 32, 32));
+
+// Magecity tile IDs
+const M = {
+  CAVE_FLOOR: 57,    // row 7 col 1 — dark blue-grey stone, perfectly uniform
+  WALL_0: 48,        // row 6 col 0 — dark stone with mortar
+  WALL_1: 49,        // row 6 col 1
+  WALL_2: 50,        // row 6 col 2
+  WALL_3: 51,        // row 6 col 3
+  COBBLE_0: 72,      // row 9 col 0 — tan-grey cobblestone
+  COBBLE_1: 73,      // row 9 col 1
+  COBBLE_2: 74,      // row 9 col 2
+  COBBLE_3: 75,      // row 9 col 3
+  COBBLE_4: 80,      // row 10 col 0
+  COBBLE_5: 81,      // row 10 col 1
+};
+
+const D = {
+  // Floors
+  FL_BLUEGREY: 128, FL_TAN: 129, FL_LIGHTGREY: 130, FL_TANCHK: 131,
+  FL_GOLD: 132, FL_GOLD2: 133,
+  FL_TAN2: 160, FL_GREYCHK: 161, FL_BLUECHK: 162, FL_WARMTAN: 163,
+  // Desks
+  DESK_WOOD_L: 1, DESK_WOOD_R: 2,
+  DESK_TAN_L: 4, DESK_TAN_R: 5,
+  DESK_GREY_L: 17, DESK_GREY_R: 18,
+  DESK_CREAM_L: 21, DESK_CREAM_R: 22,
+  DESK_COUNTER_L: 9, DESK_COUNTER_R: 10,
+  DESK_WOOD_FRONT_L: 64, DESK_WOOD_FRONT_R: 65,
+  // Chairs
+  CH_MAROON: 256, CH_DARKRED: 257, CH_PINK: 258, CH_TAN: 259,
+  CH_WHITE: 260, CH_WHITE2: 261, CH_GREY: 262, CH_GREY2: 263,
+  // Computers
+  CRT_CPU_1: 328, CRT_CPU_2: 329, CRT_KB: 330, CRT_DARK: 331,
+  MON_OFF: 332, MON_BLUE: 333,
+  // Bookshelves
+  BKSH_1: 76, BKSH_2: 77, BKSH_3: 78, BKSH_4: 79,
+  BKSH_WOOD_1: 92, BKSH_WOOD_2: 93, BKSH_WOOD_3: 94, BKSH_WOOD_4: 95,
+  // Plants
+  PLANT_POT: 450, PLANT_VASE: 451, PLANT_TALL_1: 452, PLANT_TALL_2: 453,
+  // Boxes
+  BOX_SM: 472, BOX_DBL: 473, BOX_TRIPLE: 475, BOX_LG: 476,
+  // Clocks
+  CLK_BLUE: 320, CLK_RED: 321, CLK_YELLOW: 322,
+  // Paintings
+  PAINT_L1: 384, PAINT_R1: 385, PAINT_L2: 386, PAINT_R2: 387, PAINT_SM: 388,
+  // Whiteboards
+  WB_CHALK: 432, WB_BAR: 433, WB_PIE: 434, WB_MULTI: 435,
+  // Laptops
+  LAPTOP_DARK: 393, LAPTOP_LIGHT: 394,
+  // Vending + cooler
+  VENDING: 287, WATER_COOLER: 280,
+  // Folders
+  FOLD_GREEN: 344, FOLD_BLUE: 345, FOLD_PINK: 346, FOLD_YELLOW: 350,
+  // Printers
+  PRINTER_1: 443, PRINTER_2: 444,
+  // Windows
+  WINDOW_1: 290, WINDOW_2: 291,
+  // Rugs
+  RUG_BLUE: 480, RUG_TAN: 482,
+  // Cabinets
+  CAB_WOOD: 168, CAB_GLASS: 169,
+  // Coffee
+  COFFEE: 334,
+};
+
+// ── Map Layers ──────────────────────────────────────────────────────────────
+const mapLayer = new PIXI.Container(); mapLayer.zIndex = 0; world.addChild(mapLayer);
+const furnitureLayer = new PIXI.Container(); furnitureLayer.zIndex = 0.8; world.addChild(furnitureLayer);
+
+function plcD(tid, tx, ty, layer) {
+  if (!donTex[tid]) return;
+  const s = new PIXI.Sprite(donTex[tid]);
+  s.x = tx * TILE; s.y = ty * TILE;
+  (layer || mapLayer).addChild(s);
+  return s;
+}
+function plcM(tid, tx, ty, layer) {
+  if (!magTex[tid]) return;
+  const s = new PIXI.Sprite(magTex[tid]);
+  s.x = tx * TILE; s.y = ty * TILE;
+  (layer || mapLayer).addChild(s);
+  return s;
+}
+
+// ── Floor: three zones ─────────────────────────────────────────────────────
+// Zone 1: Office interior (cobblestone)
+// Zone 2: Wall ring (6 tiles thick, dark stone with mortar)
+// Zone 3: Vast cave void (single uniform dark tile, gradient to near-black)
+
+for (let x = 0; x < MAP_W; x++) {
+  for (let y = 0; y < MAP_H; y++) {
+    const inOff = x >= OX && x < OX + OFF_W && y >= OY && y < OY + OFF_H;
+    const isEdge = inOff && (x === OX || x === OX + OFF_W - 1 || y === OY || y === OY + OFF_H - 1);
+
+    if (inOff && !isEdge) {
+      // Office interior — visible floor
+      const s = plcM(M.CAVE_FLOOR, x, y);
+      if (s) s.tint = 0x334455;
+    } else if (isEdge) {
+      // Office edge — subtle border
+      const s = plcM(M.CAVE_FLOOR, x, y);
+      if (s) s.tint = 0x1E2E38;
+    }
+    // Beyond office: void rectangle handles it (#152228)
+  }
+}
+
+// ── Object Catalog (complete multi-tile objects from object-data.json) ──────
+// Object definitions: { id, col, row, w, h, tile_ids[] }
+const OBJ = {
+  // Desks
+  DESK_WOOD:   { col:1, row:0, w:3, h:2, tiles:[1,2,3,17,18,19] },
+  DESK_TAN:    { col:4, row:0, w:3, h:2, tiles:[4,5,6,20,21,22] },
+  DESK_GREY:   { col:0, row:2, w:3, h:2, tiles:[32,33,34,48,49,50] },
+  DESK_FRONT:  { col:0, row:4, w:2, h:2, tiles:[64,65,80,81] },
+  DESK_GREY_FR:{ col:8, row:4, w:3, h:2, tiles:[72,73,74,88,89,90] },
+  // Chairs (1x2)
+  CH_MAROON:   { col:0, row:16, w:1, h:2, tiles:[256,272] },
+  CH_DARKRED:  { col:1, row:16, w:1, h:2, tiles:[257,273] },
+  CH_PINK:     { col:2, row:16, w:1, h:2, tiles:[258,274] },
+  CH_TAN:      { col:3, row:16, w:1, h:2, tiles:[259,275] },
+  CH_WHITE:    { col:4, row:16, w:1, h:2, tiles:[260,276] },
+  CH_WHITE_S:  { col:5, row:16, w:1, h:2, tiles:[261,277] },
+  CH_GREY:     { col:6, row:16, w:1, h:2, tiles:[262,278] },
+  CH_GREY_S:   { col:7, row:16, w:1, h:2, tiles:[263,279] },
+  // Computers (2x2)
+  CRT_1:       { col:8, row:22, w:2, h:2, tiles:[360,361,376,377] },
+  CRT_DARK:    { col:10,row:22, w:2, h:2, tiles:[362,363,378,379] },
+  TV_DARK:     { col:12,row:22, w:2, h:2, tiles:[364,365,380,381] },
+  PC_BLUE:     { col:14,row:22, w:2, h:2, tiles:[366,367,382,383] },
+  // Bookshelves (3x3)
+  BOOKSHELF:   { col:8, row:8, w:3, h:3, tiles:[136,137,138,152,153,154,168,169,170] },
+  // Shelving (2x3)
+  SHELF_METAL: { col:11,row:5, w:2, h:3, tiles:[91,92,107,108,123,124] },
+  SHELF_WOOD:  { col:13,row:8, w:2, h:3, tiles:[141,142,157,158,173,174] },
+  // Plants
+  PLANT_POT:   { col:2, row:28, w:1, h:2, tiles:[450,466] },
+  PLANT_VASE:  { col:3, row:28, w:1, h:2, tiles:[451,467] },
+  PLANT_TALL:  { col:8, row:28, w:1, h:2, tiles:[456,472] },
+  // Boxes
+  BOXES_SM:    { col:9, row:28, w:1, h:2, tiles:[457,473] },
+  BOXES_PILE:  { col:10,row:28, w:2, h:2, tiles:[458,459,474,475] },
+  BOXES_LG:    { col:14,row:28, w:2, h:2, tiles:[462,463,478,479] },
+  // Wall items
+  CLOCK_BLUE:  { col:0, row:22, w:1, h:2, tiles:[352,368] },
+  CLOCK_RED:   { col:1, row:22, w:1, h:2, tiles:[353,369] },
+  PAINT_LAND:  { col:0, row:24, w:2, h:2, tiles:[384,385,400,401] },
+  PAINT_LIGHT: { col:2, row:24, w:2, h:2, tiles:[386,387,402,403] },
+  WB_PIE:      { col:4, row:26, w:2, h:2, tiles:[420,421,436,437] },
+  WB_BAR:      { col:6, row:26, w:2, h:2, tiles:[422,423,438,439] },
+  WINDOW:      { col:2, row:20, w:2, h:2, tiles:[322,323,338,339] },
+  WINDOW2:     { col:4, row:20, w:2, h:2, tiles:[324,325,340,341] },
+  // Appliances
+  VENDING:     { col:14,row:16, w:2, h:3, tiles:[270,271,286,287,302,303] },
+  WATER_COOL:  { col:10,row:16, w:1, h:3, tiles:[266,282,298] },
+  COFFEE_MACH: { col:12,row:19, w:1, h:2, tiles:[316,332] },
+  PRINTER:     { col:11,row:26, w:2, h:2, tiles:[427,428,443,444] },
+  // Laptop (1x2)
+  LAPTOP:      { col:9, row:24, w:1, h:2, tiles:[393,409] },
+  // Rugs (2x1)
+  RUG_BLUE:    { col:0, row:30, w:2, h:1, tiles:[480,481] },
+  RUG_TAN:     { col:2, row:30, w:2, h:1, tiles:[482,483] },
+};
+
+// Place a complete object: all tiles at correct offsets
+function placeObj(obj, rx, ry) {
+  for (const tid of obj.tiles) {
+    const tc = tid % 16, tr = Math.floor(tid / 16);
+    const localC = tc - obj.col, localR = tr - obj.row;
+    plcD(tid, OX + rx + localC, OY + ry + localR, furnitureLayer);
+  }
+}
+
+// ── Station Furniture — grey desks + CRTs, no chairs ────────────────────────
+// Row 1: Planning, Review, Building (y=4)
+placeObj(OBJ.DESK_GREY, 3, 3);
+placeObj(OBJ.CRT_1, 4, 2);
+placeObj(OBJ.DESK_GREY, 11, 3);
+placeObj(OBJ.CRT_DARK, 12, 2);
+placeObj(OBJ.DESK_GREY, 19, 3);
+placeObj(OBJ.CRT_1, 20, 2);
+// Row 2: Audit, Testing, Repair (y=10)
+placeObj(OBJ.DESK_GREY, 3, 9);
+placeObj(OBJ.CRT_DARK, 4, 8);
+placeObj(OBJ.DESK_GREY, 11, 9);
+placeObj(OBJ.CRT_1, 12, 8);
+placeObj(OBJ.DESK_GREY, 19, 9);
+placeObj(OBJ.CRT_DARK, 20, 8);
+// Row 3: Ship, Failed, Merged (y=16)
+placeObj(OBJ.DESK_GREY, 3, 15);
+placeObj(OBJ.CRT_1, 4, 14);
+placeObj(OBJ.BOXES_PILE, 11, 16);
+placeObj(OBJ.BOOKSHELF, 19, 15);
+
+// ── "THE WORK IS MYSTERIOUS AND IMPORTANT" — Vegas marquee above the office ─
+const marqueeLayer = new PIXI.Container(); marqueeLayer.zIndex = 2; world.addChild(marqueeLayer);
+const marqueeText = "THE WORK IS MYSTERIOUS AND IMPORTANT";
+const marquee = new PIXI.Text(marqueeText, {
+  fontSize: 28, fill: "#ffffff", fontFamily: "'Georgia', 'Times New Roman', serif",
+  fontWeight: "bold", fontStyle: "italic", letterSpacing: 6,
+  stroke: "#888888", strokeThickness: 2,
+  dropShadow: true, dropShadowColor: "#ffffff", dropShadowDistance: 0, dropShadowBlur: 12, dropShadowAlpha: 0.4,
+});
+marquee.anchor.set(0.5, 1);
+marquee.x = (OX + OFF_W/2) * TILE;
+marquee.y = (OY - 2) * TILE;
+marqueeLayer.addChild(marquee);
+
+// Pulsing gold glow animation
+let marqueeT = 0;
+app.ticker.add(() => {
+  marqueeT += 0.03;
+  const pulse = 0.7 + 0.3 * Math.sin(marqueeT);
+  marquee.alpha = pulse;
+  marquee.style.dropShadowBlur = 8 + 8 * Math.sin(marqueeT * 1.3);
+});
+
+// ── Station Labels + Badges ─────────────────────────────────────────────────
+const stationLayer = new PIXI.Container(); stationLayer.zIndex = 1; world.addChild(stationLayer);
+
+for (const [ph, st] of Object.entries(STATIONS)) {
+  const c = parseInt((PHASE_COLORS[ph]||"#888").replace("#",""), 16);
+
+  const ring = new PIXI.Graphics(); ring.lineStyle(1, c, 0.08); ring.drawCircle(0,0,TILE*1.2);
+  ring.x = st.x*TILE; ring.y = st.y*TILE; stationLayer.addChild(ring); st._ring = ring;
+
+  const desk = new PIXI.Graphics(); desk.beginFill(c, 0); desk.drawRect(-1,-1,2,2); desk.endFill();
+  desk.x = st.x*TILE; desk.y = st.y*TILE; stationLayer.addChild(desk); st._desk = desk;
+
+  const lbl = new PIXI.Text(`${st.emoji} ${st.label}`, {
+    fontSize: 22, fill: "#ffffff", fontFamily: "'JetBrains Mono', monospace", fontWeight: "bold",
+    stroke: "#000000", strokeThickness: 4,
+    dropShadow: true, dropShadowColor: "#000000", dropShadowDistance: 1, dropShadowBlur: 3, dropShadowAlpha: 0.9,
+  });
+  lbl.anchor.set(0.5, 1); lbl.x = st.x*TILE; lbl.y = st.y*TILE - TILE*1.6;
+  stationLayer.addChild(lbl);
+
+  const badge = new PIXI.Text("", { fontSize: 5, fill: "#71717a", fontFamily: "monospace" });
+  badge.anchor.set(0.5, 0); badge.x = st.x*TILE; badge.y = st.y*TILE + TILE*0.55;
+  stationLayer.addChild(badge);
+  st._badge = badge;
+  st._glow = null;
+}
+
+// ── Characters (surreal B&W workers — 384x256, 32x32 frames, same format as 32x32folk)
+// 4 chars per half-sheet: char N (0-3) at col N*3 row 0, char N (4-7) at col (N-4)*3 row 4
+function makeSheet(sx, sy) {
+  const w=32, h=32, dirs={down:0, left:1, right:2, up:3}, frames={}, animations={};
+  for (const [d,r] of Object.entries(dirs)) {
+    const y = sy + r*h;
+    for (let i=0; i<3; i++) {
+      const n = `${d}${i||""}`;
+      frames[n] = {frame:{x:sx+i*w, y, w, h}, sourceSize:{w,h}, spriteSourceSize:{x:0,y:0}};
+    }
+    animations[d] = [d, `${d}1`, `${d}2`];
+  }
+  return {frames, animations, meta:{scale:"1"}};
+}
+
+// 8 character sheets from each sprite file
+const SURREAL_SHEETS = {
+  s1: makeSheet(0,0), s2: makeSheet(96,0), s3: makeSheet(192,0), s4: makeSheet(288,0),
+  s5: makeSheet(0,128), s6: makeSheet(96,128), s7: makeSheet(192,128), s8: makeSheet(288,128),
+};
+
+// Claude → white surreal workers, Codex → red-accent workers
+const CHAR_CONFIGS = {
+  claude: { sheets: [SURREAL_SHEETS.s1, SURREAL_SHEETS.s2, SURREAL_SHEETS.s3, SURREAL_SHEETS.s4, SURREAL_SHEETS.s5, SURREAL_SHEETS.s6, SURREAL_SHEETS.s7, SURREAL_SHEETS.s8], src: "surreal-workers1.png" },
+  codex:  { sheets: [SURREAL_SHEETS.s1, SURREAL_SHEETS.s2, SURREAL_SHEETS.s3, SURREAL_SHEETS.s4, SURREAL_SHEETS.s5, SURREAL_SHEETS.s6, SURREAL_SHEETS.s7, SURREAL_SHEETS.s8], src: "surreal-workers2.png" },
+};
+
+const charContainer = new PIXI.Container();
+charContainer.zIndex = 3; charContainer.sortableChildren = true;
+world.addChild(charContainer);
+
+const docContainer = new PIXI.Container();
+docContainer.zIndex = 2; docContainer.sortableChildren = true;
+world.addChild(docContainer);
+
+const charSprites = {};
+const taskDocs = {};
+
+async function initCharacters() {
+  for (const r of ROSTER) {
+    const charCfg = CHAR_CONFIGS[r.agentType] || CHAR_CONFIGS.claude;
+    // Pick a sheet variant based on character ID for visual variety
+    const sheetIdx = hashCode(r.id) % charCfg.sheets.length;
+    const charBase = PIXI.BaseTexture.from(charCfg.src, { scaleMode: PIXI.SCALE_MODES.NEAREST });
+    const sheet = new PIXI.Spritesheet(charBase, charCfg.sheets[sheetIdx]);
+    await sheet.parse();
+
+    const myActive = TASKS.filter(t => assignChar(t.id,t.agent).id === r.id && !["merged","failed","killed"].includes(t.phase));
+    const st = myActive.length ? resolveStation(myActive[0].phase) : STATIONS.planning;
+
+    const ctr = new PIXI.Container();
+    ctr.x = st.x*TILE; ctr.y = st.y*TILE + 10; ctr.zIndex = 10;
+
+    // Glow halo
+    const halo = new PIXI.Graphics();
+    halo.beginFill(r.colorHex, 0.15); halo.drawCircle(0, 0, 18); halo.endFill();
+    halo.beginFill(r.colorHex, 0.08); halo.drawCircle(0, 0, 28); halo.endFill();
+    halo.beginFill(0x000000, 0.2); halo.drawCircle(0, 0, 20); halo.endFill();
+    ctr.addChild(halo);
+
+    const shadow = new PIXI.Graphics();
+    shadow.beginFill(0x000000, 0.5); shadow.drawEllipse(0, 10, 10, 4); shadow.endFill();
+    ctr.addChild(shadow);
+
+    const anim = new PIXI.AnimatedSprite(sheet.animations.down);
+    anim.anchor.set(0.5, 0.5); anim.animationSpeed = 0.04; anim.play();
+    anim.scale.set(1.15);
+    ctr.addChild(anim);
+
+    const nm = new PIXI.Text(r.name, {
+      fontSize: 6, fill: "#ffffff", fontFamily: "'JetBrains Mono', monospace", fontWeight: "bold",
+      stroke: "#000000", strokeThickness: 2.5,
+    });
+    nm.anchor.set(0.5, 0); nm.position.set(0, 14);
+    ctr.addChild(nm);
+
+    const dot = new PIXI.Graphics();
+    dot.beginFill(0x000000, 0.5); dot.drawCircle(0, -20, 6); dot.endFill();
+    dot.beginFill(r.colorHex, 1.0); dot.drawCircle(0, -20, 3.5); dot.endFill();
+    ctr.addChild(dot);
+
+    charContainer.addChild(ctr);
+    charSprites[r.id] = { container: ctr, anim, sheet, rChar: r, walking: false, wp: 0, sx: 0, sy: 0, tx: 0, ty: 0 };
+  }
+}
+
+// ── Task Documents ──────────────────────────────────────────────────────────
+function initTaskDocs() {
+  const stationGroups = {};
+  for (const t of TASKS) { const st=resolveStation(t.phase); const k=`${st.x},${st.y}`; if(!stationGroups[k])stationGroups[k]=[]; stationGroups[k].push(t); }
+
+  for (const t of TASKS) {
+    const ch = assignChar(t.id, t.agent);
+    const st = resolveStation(t.phase);
+    const k = `${st.x},${st.y}`;
+    const group = stationGroups[k] || [t];
+    const idx = group.indexOf(t);
+    const cols = Math.ceil(Math.sqrt(group.length));
+    const col = idx % cols, row = Math.floor(idx / cols);
+    const ox = (col - (cols-1)/2) * 9;
+    const oy = (row * 8) - 10;
+
+    const g = new PIXI.Graphics();
+    const dc = ch.colorHex;
+    g.beginFill(dc, 0.08); g.drawRoundedRect(-6, -5, 12, 10, 3); g.endFill();
+    g.beginFill(dc, 0.3); g.lineStyle(1, dc, 0.6); g.drawRoundedRect(-4, -3, 8, 6, 1); g.endFill();
+    g.lineStyle(0);
+    g.beginFill(dc, 0.45); g.drawRect(-2, -1.5, 4, 0.8); g.drawRect(-2, 0.2, 3, 0.8); g.drawRect(-2, 1.8, 3.5, 0.8); g.endFill();
+    g.beginFill(0xffffff, 0.15); g.moveTo(4, -3); g.lineTo(4, -1); g.lineTo(2, -3); g.closePath(); g.endFill();
+    g.x = st.x*TILE + ox; g.y = st.y*TILE + oy;
+    g.zIndex = st.y;
+    g.interactive = true; g.cursor = "pointer";
+    g.on("pointerdown", () => showTaskDetail(t));
+    docContainer.addChild(g);
+    taskDocs[t.id] = { g, task: t, moving: false, mp: 0, msx: 0, msy: 0, mtx: 0, mty: 0 };
+  }
+}
+
+// ── Movement ────────────────────────────────────────────────────────────────
+function walkChar(charId, phase) {
+  const cs = charSprites[charId]; if (!cs) return;
+  const st = resolveStation(phase);
+  const tx = st.x*TILE, ty = st.y*TILE + 10;
+  if (Math.abs(tx - cs.container.x) < 2 && Math.abs(ty - cs.container.y) < 2) return;
+  cs.sx = cs.container.x; cs.sy = cs.container.y; cs.tx = tx; cs.ty = ty; cs.wp = 0; cs.walking = true;
+  const dx = tx - cs.sx, dy = ty - cs.sy;
+  const dir = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? "right" : "left") : (dy > 0 ? "down" : "up");
+  const f = cs.sheet.animations[dir];
+  if (f) { cs.anim.textures = f; cs.anim.animationSpeed = 0.1; cs.anim.play(); }
+}
+
+function moveDoc(taskId, phase) {
+  const td = taskDocs[taskId]; if (!td) return;
+  const st = resolveStation(phase);
+  td.msx = td.g.x; td.msy = td.g.y;
+  td.mtx = st.x*TILE + (hashCode(taskId) % 5 - 2) * 6;
+  td.mty = st.y*TILE - 10 + (hashCode(taskId + "y") % 3) * 6;
+  td.mp = 0; td.moving = true;
+}
+
+// ── Score Popup Animation ───────────────────────────────────────────────────
+function showScorePopup(charId, delta) {
+  const cs = charSprites[charId];
+  if (!cs) return;
+  const isPos = delta > 0;
+  const txt = new PIXI.Text(isPos ? `+${delta}` : `${delta}`, {
+    fontSize: 10, fontWeight: "bold",
+    fill: isPos ? "#10b981" : "#ef4444",
+    stroke: "#000000", strokeThickness: 3,
+  });
+  txt.anchor.set(0.5, 1);
+  txt.x = cs.container.x;
+  txt.y = cs.container.y - 24;
+  txt.zIndex = 100;
+  charContainer.addChild(txt);
+  const startY = txt.y;
+  const startTime = performance.now();
+  const anim = () => {
+    const t = (performance.now() - startTime) / 1500;
+    if (t >= 1) { charContainer.removeChild(txt); txt.destroy(); return; }
+    txt.y = startY - t * 30;
+    txt.alpha = 1 - t * t;
+    requestAnimationFrame(anim);
+  };
+  requestAnimationFrame(anim);
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// REPLAY (ticker-driven, per-character queues — same as office.html)
+// ══════════════════════════════════════════════════════════════════════════════
+
+let replayRunning = false, replayIdx = 0;
+const SPEED_LABELS = ["1x", "2x", "5x", "10x"];
+const SPEED_WAIT_MS = [2200, 1200, 500, 150];
+let speedIdx = 0;
+let lastStepTime = 0;
+let charQueues = {};
+let replayFired = 0;
+const charLastStep = {};
+
+function buildCharQueues() {
+  charQueues = {}; replayFired = 0;
+  for (const tr of TRANSITIONS) {
+    const task = TASKS.find(t => t.id === tr.taskId); if (!task) continue;
+    const ch = assignChar(task.id, task.agent);
+    if (!charQueues[ch.id]) charQueues[ch.id] = [];
+    charQueues[ch.id].push(tr);
+  }
+}
+
+function replayTick() {
+  if (!replayRunning) return;
+  const now = performance.now();
+  let stepped = false;
+
+  for (const [charId, queue] of Object.entries(charQueues)) {
+    if (queue.length === 0) continue;
+    const cs = charSprites[charId];
+    if (cs && cs.walking) continue;
+    const tr = queue[0];
+    const task = TASKS.find(t => t.id === tr.taskId);
+    if (!task) { queue.shift(); continue; }
+    const td = taskDocs[task.id];
+    if (td && td.moving) continue;
+    const lastTime = charLastStep[charId] || 0;
+    if (now - lastTime < SPEED_WAIT_MS[speedIdx]) continue;
+
+    queue.shift(); replayFired++; charLastStep[charId] = now;
+    task.phase = tr.to;
+    if (tr.to === "merged" || tr.to === "failed") task.status = "succeeded";
+    if (tr.to === "merged") {
+      const r = ROSTER.find(x => x.id === charId);
+      if (r) { r.score++; showScorePopup(charId, +1); }
+    }
+    if (tr.to === "failed" || tr.to === "killed") {
+      const r = ROSTER.find(x => x.id === charId);
+      if (r) { r.score--; showScorePopup(charId, -1); }
+    }
+    walkChar(charId, tr.to);
+    moveDoc(task.id, tr.to);
+    // Only show toast on actual merge/fail — NOT on routine audit pass/fail
+    if (tr.to === "merged" || tr.to === "failed") showVerdict(tr);
+    document.getElementById("replay-date").textContent = tr.ts.slice(0, 16).replace("T", " ");
+    document.getElementById("replay-counter").textContent = `${replayFired} / ${TRANSITIONS.length}`;
+    stepped = true;
+  }
+
+  if (stepped) { computeStats(); updateUI(); updateBadges(); }
+  const allDone = Object.values(charQueues).every(q => q.length === 0);
+  if (allDone && !Object.values(charSprites).some(cs => cs.walking)) stopReplay();
+}
+
+function showVerdict(tr) {
+  const flash = document.getElementById("verdict-flash");
+  const isMerge = tr.to === "merged";
+  flash.style.background = isMerge ? "rgba(16,185,129,0.15)" : "rgba(239,68,68,0.15)";
+  flash.style.border = `1px solid ${isMerge ? "rgba(16,185,129,0.3)" : "rgba(239,68,68,0.3)"}`;
+  flash.style.color = isMerge ? "#10b981" : "#ef4444";
+  flash.innerHTML = `${isMerge ? "MERGED" : "FAILED"} — ${tr.taskId}`;
+  flash.classList.add("show");
+  setTimeout(() => flash.classList.remove("show"), 2000);
+}
+
+function toggleReplay() {
+  if (replayRunning) { stopReplay(); return; }
+  for (const t of TASKS) { t.phase = "planning"; t.status = "unknown"; }
+  for (const r of ROSTER) r.score = 0;
+  replayIdx = 0; lastStepTime = 0;
+  buildCharQueues();
+  for (const td of Object.values(taskDocs)) { const st = STATIONS.planning; td.g.x = st.x*TILE; td.g.y = st.y*TILE - 10; td.g.alpha = 0.15; }
+  replayRunning = true;
+  document.getElementById("replay-btn").classList.add("active");
+  document.getElementById("replay-btn").textContent = "Stop";
+}
+
+function stopReplay() {
+  replayRunning = false;
+  document.getElementById("replay-btn").classList.remove("active");
+  document.getElementById("replay-btn").textContent = "Replay";
+}
+
+function cycleSpeed() {
+  speedIdx = (speedIdx + 1) % SPEED_LABELS.length;
+  document.getElementById("speed-btn").textContent = SPEED_LABELS[speedIdx];
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// TICKER
+// ══════════════════════════════════════════════════════════════════════════════
+
+let elapsed = 0;
+app.ticker.add((delta) => {
+  elapsed += delta / 60;
+  replayTick();
+
+  for (const cs of Object.values(charSprites)) {
+    if (cs.walking) {
+      cs.wp += delta / 60 / 0.8;
+      if (cs.wp >= 1) { cs.wp = 1; cs.walking = false; cs.container.x = cs.tx; cs.container.y = cs.ty;
+        const idle = cs.sheet.animations.down; if(idle){cs.anim.textures=idle;cs.anim.animationSpeed=0.04;cs.anim.play();}
+      } else {
+        const t = cs.wp, e = t<0.5 ? 4*t*t*t : 1-Math.pow(-2*t+2,3)/2;
+        cs.container.x = cs.sx + (cs.tx - cs.sx) * e;
+        cs.container.y = cs.sy + (cs.ty - cs.sy) * e;
+      }
+    } else {
+      cs.anim.y = Math.sin(elapsed*2 + hashCode(cs.rChar.id)) * 1;
+    }
+  }
+
+  for (const td of Object.values(taskDocs)) {
+    if (td.moving) {
+      td.mp += delta / 60 / 0.8;
+      if (td.mp >= 1) { td.mp = 1; td.moving = false; td.g.x = td.mtx; td.g.y = td.mty; td.g.alpha = 1; }
+      else { const t=td.mp, e=t<0.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2; td.g.x=td.msx+(td.mtx-td.msx)*e; td.g.y=td.msy+(td.mty-td.msy)*e; td.g.alpha = 1; }
+    }
+  }
+
+  for (const [ph,st] of Object.entries(STATIONS)) {
+    const n = TASKS.filter(t => resolveStation(t.phase) === st && t.status === "unknown").length;
+    if (st._ring) st._ring.alpha = n > 0 ? 0.15 + Math.sin(elapsed*2)*0.08 : 0.03;
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// UI
+// ══════════════════════════════════════════════════════════════════════════════
+
+function updateBadges() {
+  for (const [ph,st] of Object.entries(STATIONS)) {
+    const n = TASKS.filter(t => resolveStation(t.phase) === st).length;
+    if (st._badge) st._badge.text = n > 0 ? String(n) : "";
+  }
+}
+
+function showTaskDetail(task) {
+  document.querySelectorAll(".task-card").forEach(c => c.style.background = "");
+  const card = document.querySelector(`[data-task="${task.id}"]`);
+  if (card) { card.style.background = "rgba(255,255,255,0.08)"; card.scrollIntoView({ block: "nearest" }); }
+}
+
+function updateUI() {
+  const panel = document.getElementById("left-panel");
+  let html = "";
+
+  // Team score headers
+  const claudeAgents = ROSTER.filter(r => r.agentType === "claude");
+  const codexAgents = ROSTER.filter(r => r.agentType === "codex");
+  const claudeScore = claudeAgents.reduce((s, r) => s + r.score, 0);
+  const codexScore = codexAgents.reduce((s, r) => s + r.score, 0);
+
+  html += `<div class="panel-section" style="display:flex;flex-direction:column;gap:8px">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 0">
+      <div style="display:flex;align-items:center;gap:8px">
+        <svg width="50" height="15" viewBox="0 0 97 24" fill="#f59e0b"><path d="M13.623 20.222c-3.417 0-5.753-1.901-6.855-4.827a12.992 12.992 0 01-.838-4.772c0-4.907 2.206-8.315 7.08-8.315 3.275 0 5.297 1.425 6.448 4.826h1.402l-.19-4.69C18.709 1.18 16.258.543 13.276.543c-4.2 0-7.775 1.874-9.763 5.254a11.357 11.357 0 00-1.511 5.872c0 3.753 1.777 7.08 5.113 8.926a11.95 11.95 0 005.943 1.398c3.254 0 5.835-.617 8.122-1.697l.593-5.172h-1.43c-.858 2.362-1.88 3.78-3.574 4.534-.831.373-1.88.564-3.146.564zm14.74-17.914L28.499 0h-.967L23.23 1.29v.699l1.907.882v16.142c0 1.1-.565 1.344-2.043 1.528v1.18h7.319v-1.18c-1.484-.184-2.042-.428-2.042-1.528V2.315l-.007-.007zm29.104 19.685h.565l4.95-.937v-1.208l-.695-.054c-1.157-.109-1.457-.346-1.457-1.29V9.897l.137-2.763h-.783l-4.678.672v1.181l.457.082c1.266.183 1.64.536 1.64 1.419v7.67c-1.212.937-2.369 1.527-3.744 1.527-1.525 0-2.471-.774-2.471-2.58V9.905l.136-2.763h-.804l-4.684.672v1.181l.484.082c1.266.183 1.64.536 1.64 1.418v7.08c0 3 1.703 4.426 4.412 4.426 2.07 0 3.765-1.1 5.038-2.627L57.474 22l-.007-.007zm-13.602-9.55c0-3.836-2.043-5.309-5.733-5.309-3.254 0-5.616 1.344-5.616 3.57 0 .666.238 1.175.721 1.528l2.478-.326c-.109-.746-.163-1.201-.163-1.391 0-1.263.674-1.901 2.042-1.901 2.022 0 3.044 1.419 3.044 3.7v.746l-5.106 1.527c-1.702.462-2.67.863-3.316 1.8a3.386 3.386 0 00-.476 1.9c0 2.172 1.497 3.706 4.057 3.706 1.852 0 3.493-.835 4.922-2.416.51 1.581 1.294 2.416 2.69 2.416 1.13 0 2.15-.455 3.063-1.344l-.272-.937a4.363 4.363 0 01-1.178.163c-.783 0-1.157-.617-1.157-1.826v-5.607zm-6.536 7.378c-1.396 0-2.26-.808-2.26-2.226 0-.964.456-1.528 1.43-1.854l4.139-1.31v3.965c-1.321.997-2.097 1.425-3.31 1.425zm43.095 1.235v-1.208l-.701-.054c-1.158-.109-1.45-.346-1.45-1.29V2.308L78.409 0h-.974l-4.302 1.29v.699l1.906.882V8.18a6.024 6.024 0 00-3.656-1.046c-4.276 0-7.612 3.245-7.612 8.098 0 3.998 2.397 6.761 6.346 6.761 2.042 0 3.819-.99 4.922-2.525l-.136 2.525h.571l4.95-.937zm-8.96-12.313c2.043 0 3.575 1.181 3.575 3.353v6.11a4.91 4.91 0 01-3.547 1.425c-2.928 0-4.412-2.308-4.412-5.39 0-3.462 1.695-5.498 4.385-5.498zm19.424 3.055c-.381-1.792-1.484-2.81-3.016-2.81-2.288 0-3.874 1.717-3.874 4.18 0 3.646 1.934 6.008 5.059 6.008a5.858 5.858 0 005.03-2.953l.913.245c-.408 3.163-3.281 5.525-6.808 5.525-4.14 0-6.992-3.054-6.992-7.399 0-4.378 3.098-7.46 7.237-7.46 3.09 0 5.27 1.853 5.97 5.07l-10.783 3.3V14.05l7.264-2.247v-.006z"/></svg>
+      </div>
+      <div style="font-size:18px;font-weight:700;color:${claudeScore >= 0 ? '#f59e0b' : '#71717a'}">${claudeScore >= 0 ? '+' : ''}${claudeScore}</div>
+    </div>
+    <div style="height:1px;background:rgba(255,255,255,0.06)"></div>
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 0">
+      <div style="display:flex;align-items:center;gap:8px">
+        <svg width="50" height="14" viewBox="0 0 288 78" fill="#ffffff"><path d="M30.6 0.398438C13.77 0.398438 0 14.1684 0 30.9984C0 47.8284 13.77 61.5984 30.6 61.5984C47.43 61.5984 61.2 47.9134 61.2 30.9984C61.2 14.0834 47.515 0.398438 30.6 0.398438ZM30.6 50.6334C20.145 50.6334 11.73 42.0484 11.73 30.9984C11.73 19.9484 20.145 11.3634 30.6 11.3634C41.055 11.3634 49.47 19.9484 49.47 30.9984C49.47 42.0484 41.055 50.6334 30.6 50.6334Z"/><path d="M92.1393 17.3984C86.6143 17.3984 81.2593 19.6084 78.4543 23.3484V18.2484H67.4043V77.7484H78.4543V56.2434C81.2593 59.7284 86.4443 61.5984 92.1393 61.5984C104.039 61.5984 113.389 52.2484 113.389 39.4984C113.389 26.7484 104.039 17.3984 92.1393 17.3984ZM90.2693 51.9934C83.9793 51.9934 78.3693 47.0634 78.3693 39.4984C78.3693 31.9334 83.9793 27.0034 90.2693 27.0034C96.5593 27.0034 102.169 31.9334 102.169 39.4984C102.169 47.0634 96.5593 51.9934 90.2693 51.9934Z"/><path d="M139.401 17.3984C127.331 17.3984 117.811 26.8334 117.811 39.4984C117.811 52.1634 126.141 61.5984 139.741 61.5984C150.876 61.5984 158.016 54.8834 160.226 47.3184H149.431C148.071 50.4634 144.246 52.6734 139.656 52.6734C133.961 52.6734 129.626 48.6784 128.606 42.9834H160.736V38.6484C160.736 27.0884 152.661 17.3984 139.401 17.3984ZM128.691 35.1634C129.881 29.8084 134.301 26.3234 139.656 26.3234C145.351 26.3234 149.686 30.0634 150.196 35.1634H128.691Z"/><path d="M190.145 17.3984C185.215 17.3984 180.03 19.6084 177.65 23.2634V18.2484H166.6V60.7484H177.65V37.8834C177.65 31.2534 181.22 26.9184 187 26.9184C192.355 26.9184 195.245 30.9984 195.245 36.6934V60.7484H206.295V34.9084C206.295 24.3684 199.835 17.3984 190.145 17.3984Z"/><path d="M234.596 1.25L210.541 60.75H222.356L227.456 47.745H254.826L259.926 60.75H271.911L248.026 1.25H234.596ZM231.281 37.885L241.141 12.98L250.916 37.885H231.281Z"/><path d="M287.636 1.25H276.416V60.75H287.636V1.25Z"/></svg>
+      </div>
+      <div style="font-size:18px;font-weight:700;color:${codexScore >= 0 ? '#ffffff' : '#71717a'}">${codexScore >= 0 ? '+' : ''}${codexScore}</div>
+    </div>
+  </div>`;
+
+  html += `<div class="panel-section"><div class="panel-title">Agents</div>`;
+  for (let i = 0; i < ROSTER.length; i++) {
+    const r = ROSTER[i];
+    const s = r.stats;
+    if (i > 0) html += `<div style="height:1px;background:rgba(255,255,255,0.06);margin:4px 0"></div>`;
+    const glyph = r.agentType === "claude"
+      ? `<svg width="14" height="14" viewBox="0 0 24 24" fill="#D97757"><path d="M4.709 15.955l4.72-2.647.08-.23-.08-.128H9.2l-.79-.048-2.698-.073-2.339-.097-2.266-.122-.571-.121L0 11.784l.055-.352.48-.321.686.06 1.52.103 2.278.158 1.652.097 2.449.255h.389l.055-.157-.134-.098-.103-.097-2.358-1.596-2.552-1.688-1.336-.972-.724-.491-.364-.462-.158-1.008.656-.722.881.06.225.061.893.686 1.908 1.476 2.491 1.833.365.304.145-.103.019-.073-.164-.274-1.355-2.446-1.446-2.49-.644-1.032-.17-.619a2.97 2.97 0 01-.104-.729L6.283.134 6.696 0l.996.134.42.364.62 1.414 1.002 2.229 1.555 3.03.456.898.243.832.091.255h.158V9.01l.128-1.706.237-2.095.23-2.695.08-.76.376-.91.747-.492.584.28.48.685-.067.444-.286 1.851-.559 2.903-.364 1.942h.212l.243-.242.985-1.306 1.652-2.064.73-.82.85-.904.547-.431h1.033l.76 1.129-.34 1.166-1.064 1.347-.881 1.142-1.264 1.7-.79 1.36.073.11.188-.02 2.856-.606 1.543-.28 1.841-.315.833.388.091.395-.328.807-1.969.486-2.309.462-3.439.813-.042.03.049.061 1.549.146.662.036h1.622l3.02.225.79.522.474.638-.079.485-1.215.62-1.64-.389-3.829-.91-1.312-.329h-.182v.11l1.093 1.068 2.006 1.81 2.509 2.33.127.578-.322.455-.34-.049-2.205-1.657-.851-.747-1.926-1.62h-.128v.17l.444.649 2.345 3.521.122 1.08-.17.353-.608.213-.668-.122-1.374-1.925-1.415-2.167-1.143-1.943-.14.08-.674 7.254-.316.37-.729.28-.607-.461-.322-.747.322-1.476.389-1.924.315-1.53.286-1.9.17-.632-.012-.042-.14.018-1.434 1.967-2.18 2.945-1.726 1.845-.414.164-.717-.37.067-.662.401-.589 2.388-3.036 1.44-1.882.93-1.086-.006-.158h-.055L4.132 18.56l-1.13.146-.487-.456.061-.746.231-.243 1.908-1.312-.006.006z"/></svg>`
+      : `<svg width="14" height="14" viewBox="0 0 24 24" fill="#ffffff"><path d="M22.282 9.821a5.985 5.985 0 0 0-.516-4.91 6.046 6.046 0 0 0-6.51-2.9A6.065 6.065 0 0 0 4.981 4.18a5.985 5.985 0 0 0-3.998 2.9 6.046 6.046 0 0 0 .743 7.097 5.98 5.98 0 0 0 .51 4.911 6.051 6.051 0 0 0 6.515 2.9A5.985 5.985 0 0 0 13.26 24a6.056 6.056 0 0 0 5.772-4.206 5.99 5.99 0 0 0 3.997-2.9 6.056 6.056 0 0 0-.747-7.073zM13.26 22.43a4.476 4.476 0 0 1-2.876-1.04l.141-.081 4.779-2.758a.795.795 0 0 0 .392-.681v-6.737l2.02 1.168a.071.071 0 0 1 .038.052v5.583a4.504 4.504 0 0 1-4.494 4.494zM3.6 18.304a4.47 4.47 0 0 1-.535-3.014l.142.085 4.783 2.759a.771.771 0 0 0 .78 0l5.843-3.369v2.332a.08.08 0 0 1-.033.062L9.74 19.95a4.5 4.5 0 0 1-6.14-1.646zM2.34 7.896a4.485 4.485 0 0 1 2.366-1.973V11.6a.766.766 0 0 0 .388.676l5.815 3.355-2.02 1.168a.076.076 0 0 1-.071 0l-4.83-2.786A4.504 4.504 0 0 1 2.34 7.872v.024zm16.597 3.855l-5.833-3.387L15.119 7.2a.076.076 0 0 1 .071 0l4.83 2.791a4.494 4.494 0 0 1-.676 8.105v-5.678a.79.79 0 0 0-.407-.667zm2.01-3.023l-.141-.085-4.774-2.782a.776.776 0 0 0-.785 0L9.409 9.23V6.897a.066.066 0 0 1 .028-.061l4.83-2.787a4.5 4.5 0 0 1 6.68 4.66v.018zm-12.64 4.135l-2.02-1.164a.08.08 0 0 1-.038-.057V6.085a4.499 4.499 0 0 1 7.37-3.456l-.14.08-4.78 2.758a.795.795 0 0 0-.392.681v6.715zm1.097-2.365l2.602-1.5 2.607 1.5v2.999l-2.597 1.5-2.607-1.5z"/></svg>`;
+    html += `<div class="char-card">
+      <div class="char-info">
+        <div class="char-name" style="color:#a1a1aa;display:flex;align-items:center;gap:6px">${glyph}${r.name}</div>
+        <div class="stat-row">
+          <span><span class="sv" style="color:#71717a">${s.merged}</span> <span class="sl">merged</span></span>
+          <span><span class="sv" style="color:#71717a">${s.failed}</span> <span class="sl">failed</span></span>
+          <span><span class="sv" style="color:#71717a">${s.active}</span> <span class="sl">active</span></span>
+        </div>
+        <div class="stat-bar"><div class="stat-bar-fill" style="width:${s.mergeRate}%;background:#52525b"></div></div>
+        <div class="char-stat">${s.mergeRate}% merge · ${s.avgIter} avg iter · ${s.total} total</div>
+        <div style="font-size:14px;font-weight:700;color:#a1a1aa;margin-top:2px">Score: ${r.score >= 0 ? '+' : ''}${r.score}</div>
+      </div>
+    </div>`;
+  }
+  html += `</div>`;
+
+  const active = TASKS.filter(t => !["merged","failed","killed"].includes(t.phase));
+  if (active.length) {
+    html += `<div class="panel-section"><div class="panel-title">Active (${active.length})</div>`;
+    for (const t of active) {
+      const ch = assignChar(t.id, t.agent);
+      html += `<div class="task-card" data-task="${t.id}" style="border-left-color:#52525b" onclick="showTaskDetail(TASKS.find(x=>x.id==='${t.id}'))">
+        <div class="task-info"><div class="task-id" style="color:#a1a1aa">${t.id}</div><div class="task-desc">${t.desc}</div></div>
+        <span style="font-size:8px;color:#3f3f46">${t.iteration}/${t.maxIter}</span>
+        <span class="phase-tag" style="color:#71717a;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08)">${PHASE_LABELS[t.phase]||t.phase}</span>
+      </div>`;
+    }
+    html += `</div>`;
+  }
+
+  const merged = TASKS.filter(t => t.phase === "merged");
+  if (merged.length) {
+    html += `<div class="panel-section"><div class="panel-title">Merged (${merged.length})</div>`;
+    for (const t of merged.slice(0, 15)) {
+      const ch = assignChar(t.id, t.agent);
+      html += `<div class="task-card" data-task="${t.id}" style="border-left-color:#3f3f46;opacity:0.5">
+        <div class="task-info"><div class="task-id">${t.id}</div><div class="task-desc">${t.desc}</div></div>
+        ${t.prNumber ? `<span style="font-size:8px;color:#71717a">#${t.prNumber}</span>` : ""}
+      </div>`;
+    }
+    if (merged.length > 15) html += `<div style="font-size:9px;color:#3f3f46;padding:4px">+${merged.length-15} more</div>`;
+    html += `</div>`;
+  }
+
+  const failed = TASKS.filter(t => t.phase === "failed" || t.phase === "killed");
+  if (failed.length) {
+    html += `<div class="panel-section"><div class="panel-title">Failed (${failed.length})</div>`;
+    for (const t of failed.slice(0, 10)) {
+      const ch = assignChar(t.id, t.agent);
+      html += `<div class="task-card" data-task="${t.id}" style="border-left-color:#ef4444;opacity:0.4">
+        <div class="task-info"><div class="task-id">${t.id}</div><div class="task-desc">${t.desc}</div></div>
+        <span style="font-size:8px;color:#3f3f46">${t.iteration}/${t.maxIter}</span>
+      </div>`;
+    }
+    html += `</div>`;
+  }
+
+  panel.innerHTML = html;
+  document.getElementById("s-active").textContent = active.length;
+  document.getElementById("s-merged").textContent = merged.length;
+  document.getElementById("s-failed").textContent = failed.length;
+}
+
+// ── Camera ──────────────────────────────────────────────────────────────────
+// Center on the office island
+const centerX = (OX + OFF_W/2) * TILE;
+const centerY = (OY + OFF_H/2) * TILE;
+world.x = innerWidth/2 - centerX * SCALE;
+world.y = innerHeight/2 - centerY * SCALE;
+
+let dragging=false, ds={x:0,y:0}, ws={x:0,y:0};
+app.view.addEventListener("pointerdown", e => { dragging=true; ds={x:e.clientX,y:e.clientY}; ws={x:world.x,y:world.y}; });
+app.view.addEventListener("pointermove", e => { if(!dragging) return; world.x=ws.x+(e.clientX-ds.x); world.y=ws.y+(e.clientY-ds.y); });
+app.view.addEventListener("pointerup", ()=>dragging=false);
+app.view.addEventListener("pointerleave", ()=>dragging=false);
+app.view.addEventListener("wheel", e => {
+  e.preventDefault();
+  const f=e.deltaY>0?0.92:1.08, ns=Math.max(0.3,Math.min(8,world.scale.x*f));
+  const mx=e.clientX, my=e.clientY, wx=(mx-world.x)/world.scale.x, wy=(my-world.y)/world.scale.y;
+  world.scale.set(ns); world.x=mx-wx*ns; world.y=my-wy*ns;
+}, {passive:false});
+
+// ── Init ────────────────────────────────────────────────────────────────────
+initCharacters().then(() => { initTaskDocs(); updateUI(); updateBadges(); });
+addEventListener("resize", () => app.renderer.resize(innerWidth, innerHeight));
+</script>
+</body>
+</html>
