@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="UTF-8">
+<title>b0b Object Spot-Check</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#0c0c12; color:#e4e4e7; font-family:'JetBrains Mono',monospace; padding-bottom:20px; }
+  .tabs { position:sticky; top:0; z-index:50; background:#0c0c12; padding:8px 16px; border-bottom:1px solid rgba(255,255,255,0.05); display:flex; gap:6px; flex-wrap:wrap; }
+  .tab { background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); color:#71717a; font-family:inherit; font-size:10px; padding:5px 12px; border-radius:4px; cursor:pointer; }
+  .tab:hover { color:#f59e0b; border-color:#f59e0b55; }
+  .tab.active { background:rgba(167,139,250,0.15); border-color:#a78bfa55; color:#a78bfa; }
+  .sheet-section { padding:12px 16px; display:none; }
+  .sheet-section.active { display:block; }
+  .sheet-title { font-size:16px; color:#a78bfa; margin-bottom:12px; padding-bottom:8px; border-bottom:1px solid rgba(167,139,250,0.2); }
+  .sheet-title span { color:#52525b; font-size:11px; font-weight:400; }
+  .grid { display:flex; flex-wrap:wrap; gap:8px; }
+  .card { background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.06); border-radius:6px; padding:6px; display:flex; flex-direction:column; align-items:center; min-width:100px; }
+  .card:hover { border-color:rgba(245,158,11,0.4); background:rgba(255,255,255,0.04); }
+  .card canvas { image-rendering:pixelated; border:1px solid rgba(255,255,255,0.08); border-radius:3px; }
+  .card .id { font-size:11px; font-weight:700; color:#f59e0b; margin-top:4px; }
+  .card .label { font-size:9px; color:#a1a1aa; margin-top:2px; text-align:center; max-width:180px; word-wrap:break-word; }
+  .card .dims { font-size:8px; color:#3f3f46; margin-top:1px; }
+</style>
+</head><body>
+<div class="tabs" id="tabs"></div>
+<div id="sections"></div>
+
+<script>
+const SHEETS = [
+  { file:"donarg-office-32.png", label:"Donarg Office" },
+  { file:"masalimov-tiles.png", label:"Masalimov Tiles" },
+  { file:"magecity.png", label:"Magecity" },
+  { file:"gentle-obj.png", label:"gentle-obj" },
+  { file:"rpg-tileset.png", label:"rpg-tileset" },
+  { file:"32x32folk.png", label:"32x32folk" },
+  { file:"businessman.png", label:"Businessman" },
+  { file:"policeman.png", label:"Policeman" },
+];
+
+function switchTab(idx) {
+  document.querySelectorAll('.tab').forEach((t,i) => t.classList.toggle('active', i===idx));
+  document.querySelectorAll('.sheet-section').forEach((s,i) => s.classList.toggle('active', i===idx));
+}
+
+fetch("_tile_atlas/object-data.json").then(r=>r.json()).then(data => {
+  const tabsDiv = document.getElementById("tabs");
+  const sectionsDiv = document.getElementById("sections");
+
+  SHEETS.forEach((sheet, si) => {
+    const sd = data[sheet.file];
+    if (!sd) return;
+
+    // Tab
+    const tab = document.createElement("button");
+    tab.className = "tab" + (si===0?" active":"");
+    tab.textContent = `${sheet.label} (${sd.objects.length})`;
+    tab.onclick = () => switchTab(si);
+    tabsDiv.appendChild(tab);
+
+    // Section
+    const sec = document.createElement("div");
+    sec.className = "sheet-section" + (si===0?" active":"");
+    sec.innerHTML = `<div class="sheet-title">${sheet.label} <span>— ${sd.objects.length} objects, ${sd.tile}px tiles, ${sd.cols}x${sd.rows} grid</span></div>`;
+    const grid = document.createElement("div");
+    grid.className = "grid";
+    sec.appendChild(grid);
+    sectionsDiv.appendChild(sec);
+
+    // Load image then render all object cards
+    const img = new Image();
+    img.src = sheet.file;
+    img.onload = () => {
+      const SCALE = sd.tile === 16 ? 5 : 4;
+      const MAX_RENDER = 200; // max rendered pixel width per card
+
+      for (const obj of sd.objects) {
+        const card = document.createElement("div");
+        card.className = "card";
+
+        const pw = obj.w * sd.tile;
+        const ph = obj.h * sd.tile;
+        let s = SCALE;
+        // Clamp large objects so they don't dominate
+        if (pw * s > MAX_RENDER) s = Math.max(1, Math.floor(MAX_RENDER / pw));
+        if (ph * s > MAX_RENDER) s = Math.max(1, Math.floor(MAX_RENDER / ph));
+
+        const cw = pw * s;
+        const ch = ph * s;
+
+        const canvas = document.createElement("canvas");
+        canvas.width = cw;
+        canvas.height = ch;
+        const ctx = canvas.getContext("2d");
+        ctx.imageSmoothingEnabled = false;
+
+        // Checkerboard
+        for (let y=0; y<ch; y+=8) for (let x=0; x<cw; x+=8) {
+          ctx.fillStyle = ((x/8+y/8)%2===0) ? "#1e1e2a" : "#16161f";
+          ctx.fillRect(x,y,8,8);
+        }
+
+        // Draw the extracted object
+        ctx.drawImage(img,
+          obj.col * sd.tile, obj.row * sd.tile, pw, ph,
+          0, 0, cw, ch
+        );
+
+        // Grid overlay
+        ctx.strokeStyle = "rgba(255,255,255,0.08)";
+        ctx.lineWidth = 1;
+        const cs = sd.tile * s;
+        for (let c=0; c<=obj.w; c++) { ctx.beginPath(); ctx.moveTo(c*cs,0); ctx.lineTo(c*cs,ch); ctx.stroke(); }
+        for (let r=0; r<=obj.h; r++) { ctx.beginPath(); ctx.moveTo(0,r*cs); ctx.lineTo(cw,r*cs); ctx.stroke(); }
+
+        card.appendChild(canvas);
+
+        const idDiv = document.createElement("div");
+        idDiv.className = "id";
+        idDiv.textContent = `#${obj.id}`;
+        card.appendChild(idDiv);
+
+        const labelDiv = document.createElement("div");
+        labelDiv.className = "label";
+        labelDiv.textContent = obj.label || "unlabeled";
+        card.appendChild(labelDiv);
+
+        const dimsDiv = document.createElement("div");
+        dimsDiv.className = "dims";
+        dimsDiv.textContent = `${obj.w}x${obj.h} tiles (${pw}x${ph}px)`;
+        card.appendChild(dimsDiv);
+
+        grid.appendChild(card);
+      }
+    };
+  });
+});
+</script>
+</body></html>

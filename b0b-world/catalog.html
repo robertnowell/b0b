@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="UTF-8">
+<title>b0b Sprite Catalog</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#0c0c12; color:#e4e4e7; font-family:'JetBrains Mono',monospace; padding-bottom:60px; }
+  h1 { padding:20px; font-size:18px; color:#f59e0b; }
+  .section { margin:10px 20px 30px; }
+  .section-header { font-size:14px; font-weight:700; color:#a78bfa; margin-bottom:8px; padding:8px 12px; background:rgba(167,139,250,0.08); border-radius:6px; border-left:3px solid #a78bfa; cursor:pointer; }
+  .section-header:hover { background:rgba(167,139,250,0.15); }
+  .section-header .dims { color:#52525b; font-weight:400; font-size:11px; }
+  .section-header .mode { color:#f59e0b; font-size:10px; float:right; }
+  .grid { display:flex; flex-wrap:wrap; gap:2px; }
+  .tile { position:relative; cursor:pointer; border:1px solid transparent; transition:all 0.1s; }
+  .tile:hover { border-color:#f59e0b; z-index:10; transform:scale(1.5); }
+  .tile canvas { display:block; image-rendering:pixelated; }
+  .tile .idx { position:absolute; bottom:0; left:0; font-size:7px; color:#888; background:rgba(0,0,0,0.7); padding:0 2px; pointer-events:none; }
+  .tile:hover .idx { color:#f59e0b; font-size:9px; }
+  .selected { border-color:#10b981 !important; box-shadow:0 0 8px rgba(16,185,129,0.5); }
+  .full-sheet { image-rendering:pixelated; max-width:100%; cursor:crosshair; border:1px solid rgba(255,255,255,0.1); border-radius:4px; }
+  .full-sheet-wrap { position:relative; display:inline-block; }
+  .coord-label { position:fixed; top:10px; right:10px; z-index:100; background:rgba(0,0,0,0.9); padding:6px 12px; border-radius:6px; font-size:12px; color:#f59e0b; border:1px solid rgba(245,158,11,0.3); pointer-events:none; display:none; }
+  #selection { position:fixed; bottom:0; left:0; right:0; z-index:100; background:rgba(0,0,0,0.95); border-top:1px solid rgba(255,255,255,0.1); padding:8px 20px; font-size:11px; display:flex; gap:12px; align-items:center; }
+  #selection .sel-tiles { flex:1; display:flex; flex-wrap:wrap; gap:4px; overflow-x:auto; }
+  #selection .sel-tile { display:flex; align-items:center; gap:4px; background:rgba(255,255,255,0.05); padding:2px 6px; border-radius:4px; font-size:10px; cursor:pointer; }
+  #selection .sel-tile:hover { background:rgba(239,68,68,0.2); text-decoration:line-through; }
+  .copy-btn { background:#f59e0b; color:#000; border:none; padding:4px 12px; border-radius:4px; cursor:pointer; font-family:inherit; font-size:10px; font-weight:700; }
+  .filter-bar { padding:10px 20px; display:flex; flex-wrap:wrap; gap:6px; position:sticky; top:0; z-index:50; background:#0c0c12; border-bottom:1px solid rgba(255,255,255,0.05); }
+  .filter-btn { background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); color:#71717a; font-family:inherit; font-size:10px; padding:4px 10px; border-radius:4px; cursor:pointer; }
+  .filter-btn:hover { background:rgba(245,158,11,0.12); border-color:#f59e0b55; color:#f59e0b; }
+  .scale-btns { display:inline-flex; gap:4px; margin-left:8px; }
+  .scale-btns button { background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.1); color:#71717a; font-size:9px; padding:2px 6px; border-radius:3px; cursor:pointer; font-family:inherit; }
+  .scale-btns button:hover, .scale-btns button.active { color:#f59e0b; border-color:#f59e0b55; }
+</style>
+</head><body>
+<h1>b0b Sprite Catalog</h1>
+<div class="filter-bar" id="filters"></div>
+<div class="coord-label" id="coord-label"></div>
+<div id="sections"></div>
+<div id="selection">
+  <span style="color:#52525b">Selected:</span>
+  <div class="sel-tiles" id="sel-tiles"></div>
+  <button class="copy-btn" onclick="copySelection()">Copy IDs</button>
+  <button class="copy-btn" style="background:#06b6d4" onclick="clearSelection()">Clear</button>
+</div>
+
+<script>
+// Everything as full sheets — all tilesets have multi-cell composed objects
+const GRID_ASSETS = [];
+
+const SHEET_ASSETS = [
+  { file:"donarg-office-32.png", tile:32, label:"Donarg Office — desks, shelves, chairs (multi-tile objects)", defaultScale:3 },
+  { file:"masalimov-tiles.png", tile:32, label:"Masalimov Tiles", defaultScale:4 },
+  { file:"masalimov-chars.png", tile:32, label:"Masalimov Characters", defaultScale:4 },
+  { file:"businessman.png", tile:32, label:"pixelserial Businessman (4x8)", defaultScale:4 },
+  { file:"policeman.png", tile:32, label:"pixelserial Policeman (4x8)", defaultScale:4 },
+  { file:"32x32folk.png", tile:32, label:"AI Town 32x32folk — 8 village characters", defaultScale:3 },
+  { file:"gentle-obj.png", tile:32, label:"AI Town gentle-obj — village, trees, buildings (composed)", defaultScale:2 },
+  { file:"rpg-tileset.png", tile:16, label:"AI Town rpg-tileset (16x16!) — terrain, buildings, furniture", defaultScale:2 },
+  { file:"magecity.png", tile:32, label:"AI Town magecity — walls, plants, windows, fences (composed)", defaultScale:2 },
+  { file:"campfire.png", tile:32, label:"Campfire (4 frames)", defaultScale:5 },
+  { file:"gentlesparkle32.png", tile:32, label:"Sparkle (3x3)", defaultScale:4 },
+  { file:"gentlewaterfall32.png", tile:32, label:"Waterfall (6x10)", defaultScale:3 },
+  { file:"windmill.png", tile:208, label:"Windmill (8 rotation frames)", defaultScale:1 },
+];
+
+const selected = [];
+const coordLabel = document.getElementById("coord-label");
+
+function copySelection() {
+  const grouped = {};
+  for (const s of selected) {
+    if (!grouped[s.file]) grouped[s.file] = [];
+    grouped[s.file].push(s.id);
+  }
+  let txt = "";
+  for (const [f,ids] of Object.entries(grouped)) txt += f + ": " + ids.join(", ") + "\n";
+  navigator.clipboard.writeText(txt);
+  document.querySelector(".copy-btn").textContent = "Copied!";
+  setTimeout(() => document.querySelector(".copy-btn").textContent = "Copy IDs", 1000);
+}
+
+function clearSelection() {
+  selected.length = 0;
+  document.querySelectorAll(".selected").forEach(el => el.classList.remove("selected"));
+  updateSelBar();
+}
+
+function removeSelection(i) {
+  const s = selected[i];
+  selected.splice(i, 1);
+  document.querySelectorAll(".selected").forEach(el => {
+    if (el.dataset.selKey === s.file + ":" + s.id) el.classList.remove("selected");
+  });
+  updateSelBar();
+}
+
+function updateSelBar() {
+  const bar = document.getElementById("sel-tiles");
+  bar.innerHTML = selected.map((s,i) =>
+    `<span class="sel-tile" onclick="removeSelection(${i})">${s.file.replace('.png','')}[${s.id}]</span>`
+  ).join("");
+}
+
+function toggleTile(el, file, id) {
+  const key = file + ":" + id;
+  const i = selected.findIndex(s => s.file === file && s.id === id);
+  if (i >= 0) { selected.splice(i, 1); el.classList.remove("selected"); }
+  else { selected.push({file, id}); el.classList.add("selected"); }
+  el.dataset.selKey = key;
+  updateSelBar();
+}
+
+const sectionsDiv = document.getElementById("sections");
+const filtersDiv = document.getElementById("filters");
+let sectionIdx = 0;
+
+// ── GRID ASSETS ─────────────────────────────────────────────────────────────
+GRID_ASSETS.forEach((asset) => {
+  const si = sectionIdx++;
+  const btn = document.createElement("button");
+  btn.className = "filter-btn";
+  btn.textContent = asset.label;
+  btn.onclick = () => document.getElementById("sec-"+si).scrollIntoView({behavior:"smooth"});
+  filtersDiv.appendChild(btn);
+
+  const img = new Image();
+  img.src = asset.file;
+  img.onload = () => {
+    const cols = Math.floor(img.width / asset.tile);
+    const rows = Math.floor(img.height / asset.tile);
+    const sec = document.createElement("div");
+    sec.className = "section"; sec.id = "sec-" + si;
+    sec.innerHTML = `<div class="section-header">${asset.label} <span class="dims">${cols}x${rows} = ${cols*rows} tiles, ${asset.tile}px</span><span class="mode">GRID — click tiles</span></div>`;
+    const grid = document.createElement("div"); grid.className = "grid";
+    const renderSize = asset.tile * asset.scale;
+    const srcCanvas = document.createElement("canvas");
+    srcCanvas.width = img.width; srcCanvas.height = img.height;
+    const srcCtx = srcCanvas.getContext("2d");
+    srcCtx.drawImage(img, 0, 0);
+
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const idx = c + r * cols;
+        const data = srcCtx.getImageData(c*asset.tile, r*asset.tile, asset.tile, asset.tile).data;
+        let hasContent = false;
+        for (let i = 3; i < data.length; i += 4) { if (data[i] > 0) { hasContent = true; break; } }
+
+        const div = document.createElement("div"); div.className = "tile";
+        div.onclick = () => toggleTile(div, asset.file, String(idx));
+        div.title = asset.file + " #" + idx + " (row " + r + ", col " + c + ")";
+        const canvas = document.createElement("canvas");
+        canvas.width = renderSize; canvas.height = renderSize;
+        const ctx = canvas.getContext("2d");
+        ctx.imageSmoothingEnabled = false;
+        if (hasContent) {
+          for (let py = 0; py < renderSize; py += 8) for (let px = 0; px < renderSize; px += 8) { ctx.fillStyle = ((px/8+py/8)%2===0)?"#1a1a24":"#141420"; ctx.fillRect(px,py,8,8); }
+          ctx.drawImage(img, c*asset.tile, r*asset.tile, asset.tile, asset.tile, 0, 0, renderSize, renderSize);
+        } else { ctx.fillStyle = "#0e0e16"; ctx.fillRect(0,0,renderSize,renderSize); }
+        div.appendChild(canvas);
+        const idxLabel = document.createElement("span"); idxLabel.className = "idx"; idxLabel.textContent = idx;
+        div.appendChild(idxLabel);
+        grid.appendChild(div);
+      }
+    }
+    sec.appendChild(grid);
+    sectionsDiv.appendChild(sec);
+  };
+});
+
+// ── FULL-SHEET ASSETS ───────────────────────────────────────────────────────
+SHEET_ASSETS.forEach((asset) => {
+  const si = sectionIdx++;
+  const btn = document.createElement("button");
+  btn.className = "filter-btn";
+  btn.textContent = asset.label.split("(")[0].trim();
+  btn.onclick = () => document.getElementById("sec-"+si).scrollIntoView({behavior:"smooth"});
+  filtersDiv.appendChild(btn);
+
+  const sec = document.createElement("div");
+  sec.className = "section"; sec.id = "sec-" + si;
+
+  const img = new Image();
+  img.src = asset.file;
+  img.onload = () => {
+    const cols = Math.floor(img.width / asset.tile);
+    const rows = Math.floor(img.height / asset.tile);
+    sec.innerHTML = `<div class="section-header">${asset.label} <span class="dims">${img.width}x${img.height}px, ${asset.tile}px grid = ${cols}x${rows}</span><span class="mode">FULL SHEET — hover for coords, click to mark region</span>
+      <div class="scale-btns"><button onclick="setSheetScale('${asset.file}',1)">1x</button><button onclick="setSheetScale('${asset.file}',2)" class="active">2x</button><button onclick="setSheetScale('${asset.file}',3)">3x</button><button onclick="setSheetScale('${asset.file}',4)">4x</button></div>
+    </div>`;
+
+    const wrap = document.createElement("div"); wrap.className = "full-sheet-wrap";
+    const canvas = document.createElement("canvas");
+    canvas.className = "full-sheet";
+    canvas.dataset.file = asset.file;
+    canvas.dataset.tile = asset.tile;
+    canvas.dataset.naturalW = img.width;
+    canvas.dataset.naturalH = img.height;
+
+    let currentScale = asset.defaultScale;
+
+    function renderSheet(scale) {
+      currentScale = scale;
+      canvas.width = img.width * scale;
+      canvas.height = img.height * scale;
+      const ctx = canvas.getContext("2d");
+      ctx.imageSmoothingEnabled = false;
+      // Checkerboard bg
+      const csize = asset.tile * scale;
+      for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+        ctx.fillStyle = (c+r)%2===0 ? "#141420" : "#1a1a24";
+        ctx.fillRect(c*csize, r*csize, csize, csize);
+      }
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      // Grid lines
+      ctx.strokeStyle = "rgba(255,255,255,0.08)";
+      ctx.lineWidth = 1;
+      for (let c = 0; c <= cols; c++) { ctx.beginPath(); ctx.moveTo(c*csize, 0); ctx.lineTo(c*csize, canvas.height); ctx.stroke(); }
+      for (let r = 0; r <= rows; r++) { ctx.beginPath(); ctx.moveTo(0, r*csize); ctx.lineTo(canvas.width, r*csize); ctx.stroke(); }
+    }
+
+    renderSheet(currentScale);
+
+    // Store render function for scale buttons
+    window["setSheetScale"] = window["setSheetScale"] || function(file, scale) {
+      document.querySelectorAll(`canvas[data-file="${file}"]`).forEach(c => {
+        const img2 = new Image(); img2.src = file;
+        img2.onload = () => {
+          const t = parseInt(c.dataset.tile);
+          const cs2 = Math.floor(img2.width / t);
+          const rs2 = Math.floor(img2.height / t);
+          c.width = img2.width * scale; c.height = img2.height * scale;
+          const ctx = c.getContext("2d"); ctx.imageSmoothingEnabled = false;
+          const csize = t * scale;
+          for (let r = 0; r < rs2; r++) for (let cc = 0; cc < cs2; cc++) { ctx.fillStyle = (cc+r)%2===0?"#141420":"#1a1a24"; ctx.fillRect(cc*csize,r*csize,csize,csize); }
+          ctx.drawImage(img2, 0, 0, c.width, c.height);
+          ctx.strokeStyle = "rgba(255,255,255,0.08)"; ctx.lineWidth = 1;
+          for (let cc = 0; cc <= cs2; cc++) { ctx.beginPath(); ctx.moveTo(cc*csize,0); ctx.lineTo(cc*csize,c.height); ctx.stroke(); }
+          for (let r = 0; r <= rs2; r++) { ctx.beginPath(); ctx.moveTo(0,r*csize); ctx.lineTo(c.width,r*csize); ctx.stroke(); }
+          c.dataset.currentScale = scale;
+        };
+      });
+      // Update active button
+      const header = document.querySelector(`canvas[data-file="${file}"]`).closest(".section").querySelector(".scale-btns");
+      if (header) header.querySelectorAll("button").forEach(b => { b.classList.toggle("active", b.textContent === scale+"x"); });
+    };
+
+    canvas.dataset.currentScale = currentScale;
+
+    canvas.addEventListener("mousemove", (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const scale = parseInt(canvas.dataset.currentScale) || currentScale;
+      const px = (e.clientX - rect.left) / scale;
+      const py = (e.clientY - rect.top) / scale;
+      const col = Math.floor(px / asset.tile);
+      const row = Math.floor(py / asset.tile);
+      const idx = col + row * cols;
+      coordLabel.style.display = "block";
+      coordLabel.innerHTML = `<b>${asset.file}</b> — tile #${idx} (row ${row}, col ${col}) — px (${Math.floor(px)}, ${Math.floor(py)})`;
+    });
+    canvas.addEventListener("mouseleave", () => { coordLabel.style.display = "none"; });
+
+    canvas.addEventListener("click", (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const scale = parseInt(canvas.dataset.currentScale) || currentScale;
+      const px = (e.clientX - rect.left) / scale;
+      const py = (e.clientY - rect.top) / scale;
+      const col = Math.floor(px / asset.tile);
+      const row = Math.floor(py / asset.tile);
+      const idx = col + row * cols;
+      const id = `tile${idx}(r${row}c${col})`;
+      selected.push({file: asset.file, id});
+      updateSelBar();
+      // Flash the clicked cell
+      const ctx = canvas.getContext("2d");
+      const csize = asset.tile * scale;
+      ctx.strokeStyle = "#10b981"; ctx.lineWidth = 2;
+      ctx.strokeRect(col*csize+1, row*csize+1, csize-2, csize-2);
+    });
+
+    wrap.appendChild(canvas);
+    sec.appendChild(wrap);
+    sectionsDiv.appendChild(sec);
+  };
+});
+</script>
+</body></html>

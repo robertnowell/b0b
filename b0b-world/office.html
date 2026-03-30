@@ -142,8 +142,16 @@ const TRANSITIONS = PIPELINE_TRANSITIONS;
 
 // ── Character Roster ─────────────────────────────────────────────────────────
 const ROSTER = [
-  { id: "claude-1", name: "Claude", agentType: "claude", charKey: "f1", color: "#f59e0b", colorHex: 0xf59e0b },
-  { id: "codex-1",  name: "Codex",  agentType: "codex",  charKey: "f4", color: "#06b6d4", colorHex: 0x06b6d4 },
+  // Claude agents (6 characters — splits 61 tasks ~10 each, so 6 walk independently)
+  { id: "claude-1", name: "Ada",    agentType: "claude", charKey: "f1", color: "#f59e0b", colorHex: 0xf59e0b },
+  { id: "claude-2", name: "Grace",  agentType: "claude", charKey: "f2", color: "#fbbf24", colorHex: 0xfbbf24 },
+  { id: "claude-3", name: "Hedy",   agentType: "claude", charKey: "f5", color: "#f97316", colorHex: 0xf97316 },
+  { id: "claude-4", name: "Marian", agentType: "claude", charKey: "f6", color: "#fb923c", colorHex: 0xfb923c },
+  { id: "claude-5", name: "Radia",  agentType: "claude", charKey: "f7", color: "#d97706", colorHex: 0xd97706 },
+  { id: "claude-6", name: "Sophie", agentType: "claude", charKey: "f8", color: "#ea580c", colorHex: 0xea580c },
+  // Codex agents (2 characters — splits 6 tasks 3 each)
+  { id: "codex-1",  name: "Alan",   agentType: "codex",  charKey: "f3", color: "#06b6d4", colorHex: 0x06b6d4 },
+  { id: "codex-2",  name: "Dennis", agentType: "codex",  charKey: "f4", color: "#22d3ee", colorHex: 0x22d3ee },
 ];
 
 function hashCode(s) {

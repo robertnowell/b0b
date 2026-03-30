@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="UTF-8">
+<title>b0b Object Viewer — verify bounding boxes</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#0c0c12; color:#e4e4e7; font-family:'JetBrains Mono',monospace; }
+  .tabs { position:sticky; top:0; z-index:50; background:#0c0c12; padding:10px 20px; border-bottom:1px solid rgba(255,255,255,0.05); display:flex; gap:8px; flex-wrap:wrap; }
+  .tab { background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); color:#71717a; font-family:inherit; font-size:11px; padding:6px 14px; border-radius:5px; cursor:pointer; }
+  .tab:hover { background:rgba(245,158,11,0.12); color:#f59e0b; }
+  .tab.active { background:rgba(167,139,250,0.15); border-color:#a78bfa55; color:#a78bfa; }
+  .sheet-wrap { padding:20px; display:none; }
+  .sheet-wrap.active { display:block; }
+  .sheet-header { font-size:14px; color:#a78bfa; margin-bottom:12px; }
+  .sheet-header span { color:#52525b; font-size:11px; }
+  .canvas-wrap { position:relative; display:inline-block; overflow:auto; max-width:100%; }
+  canvas { image-rendering:pixelated; cursor:crosshair; }
+  .controls { margin-bottom:12px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .controls label { font-size:10px; color:#52525b; }
+  .controls input[type=range] { width:120px; }
+  .controls button { background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.1); color:#a1a1aa; font-size:10px; padding:3px 10px; border-radius:4px; cursor:pointer; font-family:inherit; }
+  .controls button:hover { color:#f59e0b; border-color:#f59e0b55; }
+  .controls button.active { color:#10b981; border-color:#10b98155; background:rgba(16,185,129,0.1); }
+  #hover-info { position:fixed; top:10px; right:10px; z-index:100; background:rgba(0,0,0,0.92); padding:8px 14px; border-radius:8px; font-size:11px; color:#f59e0b; border:1px solid rgba(245,158,11,0.3); pointer-events:none; display:none; max-width:350px; }
+  #hover-info .obj-preview { image-rendering:pixelated; margin-top:6px; border:1px solid rgba(255,255,255,0.1); }
+  #obj-list { position:fixed; bottom:0; left:0; right:0; z-index:100; background:rgba(0,0,0,0.95); border-top:1px solid rgba(255,255,255,0.1); padding:6px 16px; font-size:10px; display:flex; gap:8px; align-items:center; overflow-x:auto; }
+  .obj-chip { padding:3px 8px; border-radius:4px; cursor:pointer; white-space:nowrap; border:1px solid transparent; }
+  .obj-chip:hover { border-color:#f59e0b; }
+  .obj-chip.selected { border-color:#10b981; background:rgba(16,185,129,0.15); }
+</style>
+</head><body>
+
+<div class="tabs" id="tabs"></div>
+<div id="sheets"></div>
+<div id="hover-info"></div>
+<div id="obj-list">
+  <span style="color:#52525b;flex-shrink:0">Objects:</span>
+  <div id="obj-chips" style="display:flex;gap:4px;overflow-x:auto"></div>
+</div>
+
+<script>
+const SHEETS = [
+  { file: "donarg-office-32.png", label: "Donarg Office" },
+  { file: "masalimov-tiles.png", label: "Masalimov Tiles" },
+  { file: "magecity.png", label: "Magecity" },
+  { file: "gentle-obj.png", label: "gentle-obj" },
+  { file: "rpg-tileset.png", label: "rpg-tileset" },
+  { file: "32x32folk.png", label: "32x32folk" },
+  { file: "businessman.png", label: "Businessman" },
+  { file: "policeman.png", label: "Policeman" },
+];
+
+let objectData = {};
+let currentSheet = 0;
+let showBoxes = true;
+let showIds = true;
+let highlightObj = -1;
+let scales = {};
+
+// HSL color for object ID
+function objColor(id, alpha) {
+  const h = (id * 222.5) % 360;
+  return `hsla(${h}, 70%, 60%, ${alpha})`;
+}
+
+function renderSheet(idx) {
+  const sheet = SHEETS[idx];
+  const data = objectData[sheet.file];
+  if (!data) return;
+
+  const scale = scales[idx] || 3;
+  const canvas = document.getElementById("canvas-" + idx);
+  const img = canvas._img;
+  if (!img) return;
+
+  const ctx = canvas.getContext("2d");
+  const tile = data.tile;
+  const cols = data.cols, rows = data.rows;
+
+  canvas.width = img.width * scale;
+  canvas.height = img.height * scale;
+  ctx.imageSmoothingEnabled = false;
+
+  // Checkerboard bg
+  const cs = tile * scale;
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+    ctx.fillStyle = (c + r) % 2 === 0 ? "#141420" : "#1a1a24";
+    ctx.fillRect(c * cs, r * cs, cs, cs);
+  }
+
+  // Draw image
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+  // Grid lines
+  ctx.strokeStyle = "rgba(255,255,255,0.06)";
+  ctx.lineWidth = 1;
+  for (let c = 0; c <= cols; c++) { ctx.beginPath(); ctx.moveTo(c*cs, 0); ctx.lineTo(c*cs, canvas.height); ctx.stroke(); }
+  for (let r = 0; r <= rows; r++) { ctx.beginPath(); ctx.moveTo(0, r*cs); ctx.lineTo(canvas.width, r*cs); ctx.stroke(); }
+
+  if (!showBoxes) return;
+
+  // Draw bounding boxes — LARGE objects first, small on top so they're always visible
+  const sortedObjs = [...data.objects].sort((a, b) => (b.w * b.h) - (a.w * a.h));
+
+  for (const obj of sortedObjs) {
+    const isHover = obj.id === highlightObj;
+    const x = obj.col * cs;
+    const y = obj.row * cs;
+    const w = obj.w * cs;
+    const h = obj.h * cs;
+    const area = obj.w * obj.h;
+    const isLarge = area > 16; // objects > 4x4 are "large"
+
+    if (isHover) {
+      ctx.fillStyle = objColor(obj.id, 0.15);
+      ctx.fillRect(x, y, w, h);
+    }
+
+    // Large objects get thinner, more transparent borders so they don't dominate
+    if (isLarge && !isHover) {
+      ctx.strokeStyle = objColor(obj.id, 0.25);
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 4]);
+    } else {
+      ctx.strokeStyle = isHover ? objColor(obj.id, 1.0) : objColor(obj.id, 0.7);
+      ctx.lineWidth = isHover ? 3 : 1.5;
+      ctx.setLineDash([]);
+    }
+    ctx.strokeRect(x + 1, y + 1, w - 2, h - 2);
+    ctx.setLineDash([]);
+
+    if (showIds) {
+      ctx.font = `bold ${Math.max(9, scale * 3)}px monospace`;
+      const label = `#${obj.id}`;
+      ctx.fillStyle = "rgba(0,0,0,0.8)";
+      ctx.fillRect(x + 2, y + 2, ctx.measureText(label).width + 4, Math.max(10, scale * 3) + 4);
+      ctx.fillStyle = isHover ? "#ffffff" : objColor(obj.id, 0.9);
+      ctx.fillText(label, x + 4, y + Math.max(10, scale * 3) + 2);
+
+      // Label (content description)
+      if (obj.label) {
+        const descLabel = obj.label.length > 30 ? obj.label.slice(0,28) + "…" : obj.label;
+        ctx.font = `${Math.max(7, scale * 2)}px monospace`;
+        ctx.fillStyle = "rgba(0,0,0,0.8)";
+        const tw = ctx.measureText(descLabel).width;
+        ctx.fillRect(x + 2, y + Math.max(10, scale * 3) + 4, tw + 4, Math.max(8, scale * 2) + 4);
+        ctx.fillStyle = isLarge && !isHover ? "rgba(16,185,129,0.5)" : "rgba(16,185,129,0.9)";
+        ctx.fillText(descLabel, x + 4, y + Math.max(10, scale * 3) + Math.max(10, scale * 2.5) + 2);
+      }
+    }
+  }
+}
+
+function switchSheet(idx) {
+  currentSheet = idx;
+  highlightObj = -1;
+  document.querySelectorAll(".tab").forEach((t, i) => t.classList.toggle("active", i === idx));
+  document.querySelectorAll(".sheet-wrap").forEach((s, i) => s.classList.toggle("active", i === idx));
+  updateChips();
+  renderSheet(idx);
+}
+
+function updateChips() {
+  const chips = document.getElementById("obj-chips");
+  const data = objectData[SHEETS[currentSheet].file];
+  if (!data) { chips.innerHTML = ""; return; }
+
+  chips.innerHTML = data.objects.map(o => {
+    const lbl = o.label ? o.label.split("(")[0].trim().slice(0,25) : `${o.w}x${o.h}`;
+    return `<span class="obj-chip ${o.id === highlightObj ? 'selected' : ''}"
+      style="background:${objColor(o.id, 0.1)};color:${objColor(o.id, 1)}"
+      onmouseenter="highlightObject(${o.id})"
+      onmouseleave="highlightObject(-1)"
+      onclick="scrollToObject(${o.id})">#${o.id} ${lbl}</span>`;
+  }).join("");
+}
+
+function highlightObject(id) {
+  highlightObj = id;
+  renderSheet(currentSheet);
+  updateChips();
+
+  const info = document.getElementById("hover-info");
+  if (id < 0) { info.style.display = "none"; return; }
+
+  const data = objectData[SHEETS[currentSheet].file];
+  const obj = data.objects.find(o => o.id === id);
+  if (!obj) return;
+
+  // Create preview
+  const canvas = document.getElementById("canvas-" + currentSheet);
+  const img = canvas._img;
+  const tile = data.tile;
+  const prevScale = 4;
+  const pw = obj.w * tile * prevScale;
+  const ph = obj.h * tile * prevScale;
+
+  const prevCanvas = document.createElement("canvas");
+  prevCanvas.width = pw; prevCanvas.height = ph;
+  const pctx = prevCanvas.getContext("2d");
+  pctx.imageSmoothingEnabled = false;
+  // Checkerboard
+  for (let y = 0; y < ph; y += 8) for (let x = 0; x < pw; x += 8) {
+    pctx.fillStyle = ((x/8+y/8)%2===0) ? "#1a1a24" : "#222230";
+    pctx.fillRect(x, y, 8, 8);
+  }
+  pctx.drawImage(img, obj.col*tile, obj.row*tile, obj.w*tile, obj.h*tile, 0, 0, pw, ph);
+
+  info.style.display = "block";
+  const label = obj.label || "unlabeled";
+  info.innerHTML = `<b>Object #${obj.id}</b> — <span style="color:#10b981">${label}</span><br>
+    <span style="color:#a1a1aa">${obj.w}x${obj.h} tiles (${obj.tiles} cells)</span><br>
+    <span style="color:#52525b">Position: row ${obj.row}, col ${obj.col}</span><br>
+    <span style="color:#52525b">Tile IDs: [${obj.tile_ids.slice(0,12).join(", ")}${obj.tile_ids.length > 12 ? "..." : ""}]</span>
+    <br><img class="obj-preview" src="${prevCanvas.toDataURL()}" style="max-width:${Math.min(pw, 300)}px">`;
+}
+
+function scrollToObject(id) {
+  const data = objectData[SHEETS[currentSheet].file];
+  const obj = data.objects.find(o => o.id === id);
+  if (!obj) return;
+  const scale = scales[currentSheet] || 3;
+  const tile = data.tile;
+  const canvas = document.getElementById("canvas-" + currentSheet);
+  const wrap = canvas.parentElement;
+  // Scroll the object into view
+  const x = obj.col * tile * scale - wrap.clientWidth / 2 + obj.w * tile * scale / 2;
+  const y = obj.row * tile * scale - wrap.clientHeight / 2 + obj.h * tile * scale / 2;
+  wrap.scrollTo({ left: x, top: y, behavior: "smooth" });
+}
+
+// Load data and build UI
+fetch("_tile_atlas/object-data.json").then(r => r.json()).then(data => {
+  objectData = data;
+
+  const tabsDiv = document.getElementById("tabs");
+  const sheetsDiv = document.getElementById("sheets");
+
+  SHEETS.forEach((sheet, idx) => {
+    const sd = data[sheet.file];
+    if (!sd) return;
+
+    scales[idx] = sd.tile === 16 ? 3 : (sheet.file === "magecity.png" ? 3 : 3);
+
+    // Tab
+    const tab = document.createElement("button");
+    tab.className = "tab" + (idx === 0 ? " active" : "");
+    tab.textContent = `${sheet.label} (${sd.objects.length} objects)`;
+    tab.onclick = () => switchSheet(idx);
+    tabsDiv.appendChild(tab);
+
+    // Sheet wrapper
+    const wrap = document.createElement("div");
+    wrap.className = "sheet-wrap" + (idx === 0 ? " active" : "");
+
+    wrap.innerHTML = `
+      <div class="sheet-header">${sheet.label} <span>— ${sd.cols}x${sd.rows} grid, ${sd.tile}px tiles, ${sd.objects.length} detected objects</span></div>
+      <div class="controls">
+        <label>Scale:</label>
+        <input type="range" min="1" max="6" value="${scales[idx]}" oninput="scales[${idx}]=+this.value;renderSheet(${idx});document.getElementById('scale-val-${idx}').textContent=this.value+'x'">
+        <span id="scale-val-${idx}" style="font-size:10px;color:#a1a1aa;width:20px">${scales[idx]}x</span>
+        <button class="${showBoxes?'active':''}" onclick="showBoxes=!showBoxes;this.classList.toggle('active');renderSheet(${idx})">Boxes</button>
+        <button class="${showIds?'active':''}" onclick="showIds=!showIds;this.classList.toggle('active');renderSheet(${idx})">IDs</button>
+      </div>
+      <div class="canvas-wrap" style="max-height:calc(100vh - 180px);overflow:auto">
+        <canvas id="canvas-${idx}"></canvas>
+      </div>
+    `;
+    sheetsDiv.appendChild(wrap);
+
+    // Load image and render
+    const img = new Image();
+    img.src = sheet.file;
+    img.onload = () => {
+      const canvas = document.getElementById("canvas-" + idx);
+      canvas._img = img;
+
+      // Mouse hover -> find object under cursor
+      canvas.addEventListener("mousemove", (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const scale = scales[idx];
+        const px = (e.clientX - rect.left) / scale;
+        const py = (e.clientY - rect.top) / scale;
+        const col = Math.floor(px / sd.tile);
+        const row = Math.floor(py / sd.tile);
+
+        // Find which object contains this cell — prefer SMALLEST (most specific)
+        let found = -1;
+        let foundArea = Infinity;
+        for (const obj of sd.objects) {
+          if (col >= obj.col && col < obj.col + obj.w && row >= obj.row && row < obj.row + obj.h) {
+            const area = obj.w * obj.h;
+            if (area < foundArea) {
+              found = obj.id;
+              foundArea = area;
+            }
+          }
+        }
+        if (found !== highlightObj) {
+          highlightObject(found);
+        }
+      });
+
+      canvas.addEventListener("mouseleave", () => highlightObject(-1));
+
+      renderSheet(idx);
+    };
+  });
+
+  updateChips();
+});
+</script>
+</body></html>
