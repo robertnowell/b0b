@@ -313,35 +313,11 @@ plcF(D.WB_PIE, 15, 1); plcF(D.WB_MULTI, 16, 1);
 plcF(D.PAINT_L2, 5, 0); plcF(D.PAINT_SM, 7, 0);
 plcF(D.RUG_BLUE, 5, 5); plcF(D.RUG_TAN, 10, 5);
 
-// ── Station Glow + Flow + Particles ─────────────────────────────────────────
-const glowLayer = new PIXI.Container(); glowLayer.zIndex = 0.3; world.addChild(glowLayer);
-for (const [ph, st] of Object.entries(STATIONS)) {
-  const c = parseInt((PHASE_COLORS[ph]||"#888").replace("#",""), 16);
-  const glow = new PIXI.Graphics();
-  glow.beginFill(c, 0.04); glow.drawCircle(0,0,TILE*2.5); glow.endFill();
-  glow.beginFill(c, 0.06); glow.drawCircle(0,0,TILE*1.5); glow.endFill();
-  glow.beginFill(c, 0.03); glow.drawCircle(0,0,TILE*3.5); glow.endFill();
-  glow.x = st.x*TILE; glow.y = st.y*TILE; glowLayer.addChild(glow); st._glow = glow;
-}
-
-const flowLayer = new PIXI.Container(); flowLayer.zIndex = 0.5; world.addChild(flowLayer);
-const FLOWS = [["planning","plan_review"],["planning","implementing"],["implementing","auditing"],["auditing","testing"],["auditing","fixing"],["fixing","auditing"],["testing","pr_ready"],["pr_ready","merged"]];
-const flowG = new PIXI.Graphics(); flowG.lineStyle(1, 0xffffff, 0.04);
-for (const [a,b] of FLOWS) { const sa=STATIONS[a], sb=STATIONS[b]; if(sa&&sb){ flowG.moveTo(sa.x*TILE, sa.y*TILE); flowG.lineTo(sb.x*TILE, sb.y*TILE); }}
-flowLayer.addChild(flowG);
-
-const flowDots = [];
-for (const [a,b] of FLOWS) { const sa=STATIONS[a], sb=STATIONS[b]; if(!sa||!sb) continue;
-  const c = parseInt((PHASE_COLORS[a]||"#888").replace("#",""), 16);
-  for (let i=0; i<2; i++) { const dot=new PIXI.Graphics(); dot.beginFill(c,0.4); dot.drawCircle(0,0,1.2); dot.endFill(); dot.beginFill(c,0.15); dot.drawCircle(0,0,2.5); dot.endFill();
-    flowLayer.addChild(dot); flowDots.push({dot, sx:sa.x*TILE, sy:sa.y*TILE, ex:sb.x*TILE, ey:sb.y*TILE, progress:Math.random(), speed:0.15+Math.random()*0.1}); }
-}
-
-const particleLayer = new PIXI.Container(); particleLayer.zIndex = 0.2; world.addChild(particleLayer);
-const particles = [];
-for (let i=0; i<25; i++) { const p=new PIXI.Graphics(); p.beginFill(0xffffff, 0.03+Math.random()*0.05); p.drawCircle(0,0,0.4+Math.random()*0.5); p.endFill();
-  p.x=Math.random()*MAP_W*TILE; p.y=Math.random()*MAP_H*TILE; particleLayer.addChild(p);
-  particles.push({g:p, baseX:p.x, baseY:p.y, driftY:-0.03-Math.random()*0.07, phase:Math.random()*Math.PI*2, speed:0.2+Math.random()*0.3}); }
+// ── Minimal ambient (no glow circles, no flow dots — let the pixel art breathe)
+const flowDots = []; // empty — no flow animation
+const particles = []; // empty — no particles
+// Keep glow/ring refs for the ticker (set to null)
+for (const [ph, st] of Object.entries(STATIONS)) { st._glow = null; }
 
 // ── Station Labels + Badges ─────────────────────────────────────────────────
 const stationLayer = new PIXI.Container(); stationLayer.zIndex = 1; world.addChild(stationLayer);
@@ -702,38 +678,10 @@ app.ticker.add((delta) => {
     }
   }
 
-  // Station desk/ring/glow pulse
+  // Station ring pulse (subtle)
   for (const [ph,st] of Object.entries(STATIONS)) {
     const n = TASKS.filter(t => resolveStation(t.phase) === st && t.status === "unknown").length;
-    const active = n > 0;
-    if (st._desk) st._desk.alpha = active ? 0.7 + Math.sin(elapsed*1.5)*0.25 : 0.3;
-    if (st._ring) {
-      st._ring.alpha = active ? 0.3 + Math.sin(elapsed*2)*0.15 : 0.05;
-      st._ring.scale.set(active ? 1 + Math.sin(elapsed*1.2)*0.03 : 1);
-    }
-    if (st._glow) st._glow.alpha = active ? 0.8 + Math.sin(elapsed*1)*0.2 : 0.3;
-  }
-
-  // Animate flow dots
-  for (const fd of flowDots) {
-    fd.progress += fd.speed * delta / 60;
-    if (fd.progress > 1) fd.progress -= 1;
-    const p = fd.progress;
-    fd.dot.x = fd.sx + (fd.ex - fd.sx) * p;
-    fd.dot.y = fd.sy + (fd.ey - fd.sy) * p;
-    // Fade at endpoints
-    fd.dot.alpha = Math.sin(p * Math.PI) * 0.8;
-  }
-
-  // Animate ambient particles
-  for (const pt of particles) {
-    pt.phase += pt.speed * delta / 60;
-    pt.g.x = pt.baseX + Math.sin(pt.phase) * 8;
-    pt.g.y = pt.baseY + Math.cos(pt.phase * 0.7) * 5 + pt.driftY * elapsed * 3;
-    pt.g.alpha = 0.05 + Math.sin(pt.phase * 0.5) * 0.05;
-    // Wrap around
-    if (pt.g.y < 0) { pt.g.y = MAP_H * TILE; pt.baseY = pt.g.y; }
-    if (pt.g.y > MAP_H * TILE) { pt.g.y = 0; pt.baseY = 0; }
+    if (st._ring) st._ring.alpha = n > 0 ? 0.15 + Math.sin(elapsed*2)*0.08 : 0.03;
   }
 });
 
