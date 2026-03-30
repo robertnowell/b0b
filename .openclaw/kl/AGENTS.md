@@ -231,18 +231,30 @@ When someone sends an HTML file containing K&L Wine Merchants email content (loo
 When someone requests a post-pipeline edit (e.g. "remove the Jackson Kelly review", "reorder the wines", "move the product table above the reviews"):
 
 1. **React** with 🍷 to acknowledge
-2. **Identify the target HTML** — resolve which edited file to tweak:
+
+2. **Classify the change** — decide whether to re-run the pipeline or use the tweak tool:
+   - **Re-run pipeline** when the change affects pipeline inputs: buyer name/ID, hero attribution, pull quote text, intro text, subject line, preview text. Update the `_inputs.txt` file with corrected values and re-run `pipeline.js` on the **original raw HTML** (from `inbox/` or the attached file).
+   - **Use tweak tool** for content edits within the body: removing/swapping reviews, reordering sections, changing text in wine blocks. These operate on the **pipeline output** in `edited/`.
+
+3. **⚠️ CRITICAL: Never tweak the raw input HTML.** The user may attach a raw HTML file with their tweak request — this is the **unprocessed input** (no hero section, no purchase button, no formatted footer). **Always** operate on the pipeline output in `edited/`. If the user attaches a file, ignore it for tweaking purposes and find the corresponding output in `edited/`.
+
+4. **Identify the target output** (for tweak tool path):
    - **Thread context**: if the request is in a thread under a pipeline run, use that run's output
    - **Explicit name**: if they mention a wine/email name (e.g. "tweak the patria email"), find it in `/Users/kopi/Projects/KL/edited/<name>/<name>.html`
    - **Most recent**: if ambiguous, use the most recently modified file in `/Users/kopi/Projects/KL/edited/` (check with `ls -lt`)
    - **Ask** if still unclear — don't guess
-3. **Run the tweak tool**:
+
+5. **Run the tweak tool** (if not re-running pipeline):
    ```
    cd /Users/kopi/Projects/KL && node tools/tweak.js --html edited/<name>/<name>.html --instructions "..."
    ```
    The tool modifies the HTML in-place and appends a tweak record to the audit JSON.
-4. **Upload** the tweaked HTML back to the channel
-5. **Summarize** what changed (the tool logs applied operations)
+
+6. **Verify** after tweaking: grep for key terms to confirm changes applied correctly and nothing was over-modified.
+
+7. **Upload** the tweaked HTML back to the channel
+
+8. **Summarize** what changed (the tool logs applied operations)
 
 ## Make It Yours
 

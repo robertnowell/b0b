@@ -96,6 +96,17 @@ try:
         if t['id'] == task_id:
             t['fixTarget'] = 'reviewing'
             t['lastFeedback'] = feedback
+            # Record current HEAD so monitor can detect zero-commit fixes
+            import subprocess, time as _time
+            wt = t.get('worktree', '')
+            if wt:
+                r = subprocess.run(['git', 'log', '--oneline', '-1', '--format=%H'],
+                    capture_output=True, text=True, cwd=wt)
+                if r.returncode == 0:
+                    t['lastKnownHead'] = r.stdout.strip()
+            # Set lastMonitorAction so the race guard in monitor.sh skips this task
+            # for 60s — prevents stale check-agents status from triggering false alarms
+            t['lastMonitorAction'] = int(_time.time())
             break
     with open(tasks_file, 'w') as f:
         json.dump(tasks, f, indent=2)

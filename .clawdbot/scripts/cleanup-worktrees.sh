@@ -48,6 +48,16 @@ try:
     with open(tasks_file, 'w') as f:
         json.dump(active, f, indent=2)
         f.write('\n')
+
+    # Advance local main to match origin/main (ff-only so it's safe)
+    # This keeps pipeline scripts current after PR merges
+    subprocess.run(['git', 'fetch', 'origin', 'main'], capture_output=True, cwd=repo_root)
+    result = subprocess.run(
+        ['git', 'merge', '--ff-only', 'origin/main'],
+        capture_output=True, text=True, cwd=repo_root
+    )
+    if result.returncode == 0 and 'Already up to date' not in result.stdout:
+        print(f'Advanced local main: {result.stdout.strip()}')
 finally:
     fcntl.flock(lock_fd, fcntl.LOCK_UN)
     lock_fd.close()

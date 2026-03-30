@@ -238,7 +238,8 @@ Every code task flows through these phases. **Do not skip phases.**
 
 ### Non-Negotiable Rules
 
-0. **NEVER push directly to main.** Every change goes through a branch + PR, no matter how small. No exceptions. This is a failsafe that must never be violated.
+0. **NEVER push directly to main.**
+0.5. **Always ping `<@U020AAXG1DE>` when a fix/audit/test agent completes with ZERO new commits.** This means the agent likely misread feedback or silently failed. Don't just post the warning — tag Robert so he sees it immediately. Every change goes through a branch + PR, no matter how small. No exceptions. This is a failsafe that must never be violated.
 1. **Never read source code to investigate a bug.** Spawn a planning agent instead. I can glance at a file to understand context for a review, but investigation is the agent's job.
 2. **Never write or edit code in the repo.** That's what agents are for. I write prompts, plans, and docs — not application code.
 3. **Never skip the planning phase.** Even for "simple" fixes. The planning agent might find complexity I'd miss, and it creates an audit trail.

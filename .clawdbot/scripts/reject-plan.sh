@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# reject-plan.sh — Reject a plan and send task back to planning or needs_split
-# Usage: ./reject-plan.sh <task-id> [--reason "why"] [--split]
+# reject-plan.sh — Reject a plan and send task back to planning, needs_split, or kill it
+# Usage: ./reject-plan.sh <task-id> [--reason "why"] [--split] [--kill]
 #
 # --split: Mark as needs_split instead of re-planning
-# Without --split: Respawns planning agent with feedback
+# --kill:  Kill the task entirely (set to failed, terminate agent)
+# Without flags: Respawns planning agent with feedback
 
 set -euo pipefail
 source "$(cd "$(dirname "$0")" && pwd)/config.sh"
@@ -12,17 +13,26 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SPAWN="${SCRIPT_DIR}/spawn-agent.sh"
 source "${SCRIPT_DIR}/notify.sh"
 
-TASK_ID="${1:?Usage: reject-plan.sh <task-id> [--reason 'why'] [--split]}"
+TASK_ID="${1:?Usage: reject-plan.sh <task-id> [--reason 'why'] [--split] [--kill]}"
 shift
 REASON=""
 SPLIT=false
+KILL=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --reason) REASON="$2"; shift 2 ;;
     --split)  SPLIT=true; shift ;;
+    --kill)   KILL=true; shift ;;
     *) echo "ERROR: Unknown arg: $1" >&2; exit 1 ;;
   esac
 done
+
+# --kill: delegate to kill-task.sh
+if [ "$KILL" = true ]; then
+  KILL_ARGS=("$TASK_ID")
+  [ -n "$REASON" ] && KILL_ARGS+=(--reason "$REASON")
+  exec "${SCRIPT_DIR}/kill-task.sh" "${KILL_ARGS[@]}"
+fi
 
 # Read and validate task
 TASK_JSON=$(python3 -c "

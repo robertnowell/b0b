@@ -53,6 +53,8 @@
 | `#alerts-kopi-claw` | `C0AHGH5FH42` | Pipeline audit log, status updates, approvals |
 
 - **Always use `accountId=kopiclaw`** when posting to these channels (default account is `kl` which can't access them)
+- **For `message` tool `send` action: use `target` for the channel ID, NOT `channel`.** `channel` is for provider routing (slack/telegram/etc). Using `channel` with a channel ID causes a lowercase lookup bug and fails.
+- **For `message` tool `react` action: use `channel` for the channel ID** (different from send!)
 - **When a plan reaches plan_review**: post the FULL plan to `#project-kopi-claw` (C0AJAR3S76U), not just a summary. This is non-negotiable — Robert wants the complete plan text, not a summary.
 
 ## Agent Selection
