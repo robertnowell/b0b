@@ -119,7 +119,7 @@ except Exception:
   fi
 
   # Discover existing kopiclaw plist
-  existing_label=$(launchctl list 2>/dev/null | awk '/openclaw|kopiclaw/ && $3 ~ /monitor|kopiclaw/ {print $3}' | head -1 || true)
+  existing_label=$(launchctl list 2>/dev/null | awk '$3 ~ /kopiclaw/ {print $3; exit}' || true)
   plist_file=""
   if [[ -n "$existing_label" ]]; then
     plist_file="$HOME/Library/LaunchAgents/${existing_label}.plist"
