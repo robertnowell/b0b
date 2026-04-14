@@ -263,7 +263,7 @@ if [[ $SKIP_KONID -eq 0 ]]; then
     init_args=(
       --name konid
       --repo robertnowell/konid-language-learning
-      --bot-user b0b
+      --bot-user kopi-claw
       --slack-project-channel C0ASUGC787Q
       --slack-alerts-channel C0ATQS3NJRE
       --slack-review-user U020AAXG1DE
