@@ -28,9 +28,14 @@ tasks_file = sys.argv[2]
 lock_file = sys.argv[3]
 max_runtime = int(sys.argv[4])
 planning_timeout = int(sys.argv[7]) if len(sys.argv) > 7 else max_runtime
+# Optional 8th arg: workspace_repo_path (product repo). Falls back to repo_root
+# (the b0b scripts repo) for legacy "scripts inside product repo" setups.
+workspace_repo_path = sys.argv[8] if len(sys.argv) > 8 else repo_root
+
+ws = os.environ.get('B0B_WORKSPACE', 'default')
 
 def get_task_repo(task):
-    return repo_root
+    return workspace_repo_path
 
 lock_fd = open(lock_file, 'w')
 fcntl.flock(lock_fd, fcntl.LOCK_EX)
@@ -52,7 +57,8 @@ try:
     for task in tasks:
       try:
         tid = task.get('id', 'unknown')
-        tmux = task.get('tmuxSession', f'agent-{tid}')
+        # Fallback matches spawn-agent.sh:70 workspace-prefixed convention.
+        tmux = task.get('tmuxSession', f'agent-{ws}-{tid}')
         branch = task.get('branch', '')
         agent = task.get('agent', 'unknown')
         started = task.get('startedAt', '')
@@ -233,4 +239,4 @@ output = {
     }
 }
 print(json.dumps(output, indent=2))
-" "$REPO_ROOT" "$TASKS_FILE" "$LOCK_FILE" "$MAX_RUNTIME_SECONDS" "$MAX_ITERATIONS" "$REPO_ROOT" "$PLANNING_TIMEOUT_SECONDS"
+" "$REPO_ROOT" "$TASKS_FILE" "$LOCK_FILE" "$MAX_RUNTIME_SECONDS" "$MAX_ITERATIONS" "$REPO_ROOT" "$PLANNING_TIMEOUT_SECONDS" "$WORKSPACE_REPO_PATH"

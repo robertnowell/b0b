@@ -28,6 +28,12 @@ WORKTREE_BASE="${WORKTREE_BASE:-/Users/kopi/Projects/kopi-worktrees}"
 # Target product repo (distinct from REPO_ROOT, which is the b0b scripts repo).
 WORKSPACE_REPO="${WORKSPACE_REPO:-tryrendition/Rendition}"
 
+# Local checkout of the product repo — where worktrees are created from and
+# where git/gh subprocess calls cd into. Defaults to REPO_ROOT for legacy
+# setups where scripts lived inside the product repo. New workspaces MUST
+# set this in their workspace config.sh (b0b is its own repo now).
+WORKSPACE_REPO_PATH="${WORKSPACE_REPO_PATH:-$REPO_ROOT}"
+
 # Bot identity for GitHub mentions. Defaults to kopi-claw for backward compat;
 # new workspaces default to b0b in the _template/config.sh.
 BOT_USER="${BOT_USER:-kopi-claw}"

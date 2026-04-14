@@ -67,6 +67,7 @@ max_auto_split_attempts = int(sys.argv[14])
 workspace_repo = sys.argv[15]
 bot_user = sys.argv[16]
 workspace_name = sys.argv[17]
+workspace_repo_path = sys.argv[18]
 
 check_output = json.loads(sys.stdin.read())
 
@@ -77,7 +78,9 @@ _clean_env = {k: v for k, v in os.environ.items()
                         'GH_TOKEN', 'TMPDIR', 'CLAWDBOT_STATE_DIR')}
 
 def get_task_repo(task):
-    return repo_root
+    # Used as cwd for git/gh subprocess calls touching the product repo.
+    # Distinct from repo_root (the b0b scripts repo).
+    return workspace_repo_path
 
 def get_task_worktree_base(task):
     return worktree_base
@@ -893,9 +896,10 @@ def get_superseding_task(tid, all_tasks):
 # Pattern: read snapshot for decisions, call spawn (which writes its own entry),
 # then use apply_updates() to re-read fresh JSON and apply monitor-specific fields.
 
-# Fetch latest main so origin/main is fresh for diffs and reverts
+# Fetch latest main so origin/main is fresh for diffs and reverts.
+# This is a git op against the product repo, not the b0b scripts repo.
 subprocess.run(['git', 'fetch', 'origin', 'main', '--quiet'],
-               capture_output=True, cwd=repo_root)
+               capture_output=True, cwd=workspace_repo_path)
 
 tasks = read_tasks()
 task_map = {r['id']: r for r in check_output.get('tasks', [])}
@@ -1491,7 +1495,7 @@ for task in tasks:
                     plan_body += f'\n\n---\n*Posted by {workspace_name} pipeline*'
                     subprocess.run(
                         ['gh', 'issue', 'comment', str(pr_num), '--repo', workspace_repo, '--body', plan_body],
-                        capture_output=True, text=True, cwd=repo_root, env=_clean_env)
+                        capture_output=True, text=True, cwd=workspace_repo_path, env=_clean_env)
 
                 requires_review = task.get('requiresPlanReview', False)
                 if requires_review:
@@ -1796,7 +1800,7 @@ for task in tasks:
                     body = f'## Feedback Addressed\\n\\n{safe_feedback}\\n\\n---\\n*Posted by {workspace_name} pipeline*'
                     subprocess.run(
                         ['gh', 'issue', 'comment', str(pr_num), '--repo', workspace_repo, '--body', body],
-                        capture_output=True, text=True, cwd=repo_root, env=_clean_env)
+                        capture_output=True, text=True, cwd=workspace_repo_path, env=_clean_env)
             elif fix_target == 'testing':
                 _t_msg = log_transition(task, 'fixing', 'testing',
                     iteration=iteration, prompt_template='test.md',
@@ -1941,6 +1945,6 @@ for task in tasks:
     # running tasks in non-terminal phases: no action needed (wait for completion)
 
 print(json.dumps({'processed': len(task_map), 'changes_made': changes_made}, indent=2))
-" "$SCRIPT_DIR" "$TASKS_FILE" "$LOCK_FILE" "$REPO_ROOT" "$WORKTREE_BASE" "$MAX_ITERATIONS" "$NOTIFY" "$SPAWN" "$LOG_DIR" "$FILL_TEMPLATE" "$PLANS_DIR" "$MAX_AUTO_RETRIES" "$MAX_SPLIT_DEPTH" "$MAX_AUTO_SPLIT_ATTEMPTS" "$WORKSPACE_REPO" "$BOT_USER" "$WORKSPACE_NAME" <<< "$CHECK_OUTPUT"
+" "$SCRIPT_DIR" "$TASKS_FILE" "$LOCK_FILE" "$REPO_ROOT" "$WORKTREE_BASE" "$MAX_ITERATIONS" "$NOTIFY" "$SPAWN" "$LOG_DIR" "$FILL_TEMPLATE" "$PLANS_DIR" "$MAX_AUTO_RETRIES" "$MAX_SPLIT_DEPTH" "$MAX_AUTO_SPLIT_ATTEMPTS" "$WORKSPACE_REPO" "$BOT_USER" "$WORKSPACE_NAME" "$WORKSPACE_REPO_PATH" <<< "$CHECK_OUTPUT"
 
 log "=== Monitor run completed ==="

@@ -36,6 +36,7 @@ After the multi-workspace refactor, kopiclaw should run via the new `B0B_WORKSPA
    #!/usr/bin/env bash
    # Workspace config for kopiclaw — preserves legacy state-dir name.
    WORKSPACE_REPO="tryrendition/Rendition"
+   WORKSPACE_REPO_PATH="/Users/kopi/Projects/kopi"
    BOT_USER="kopi-claw"
    WORKTREE_BASE="/Users/kopi/Projects/kopi-worktrees"
    SLACK_PROJECT_CHANNEL="C0AJAR3S76U"
@@ -45,7 +46,9 @@ After the multi-workspace refactor, kopiclaw should run via the new `B0B_WORKSPA
    EOF
    ```
 
-   Note `STATE_DIR` keeps the legacy `workspace-kopiclaw` directory name — do NOT rename to `~/.openclaw/kopiclaw/pipeline`. There's existing state there.
+   Notes:
+   - `STATE_DIR` keeps the legacy `workspace-kopiclaw` directory name — do NOT rename to `~/.openclaw/kopiclaw/pipeline`. There's existing state there.
+   - `WORKSPACE_REPO_PATH` points at the local checkout of the kopi monorepo. Required because b0b's scripts now live in `~/Projects/b0b/` (not inside the kopi repo). All git/gh ops cd into `WORKSPACE_REPO_PATH`.
 
 4. Edit the existing kopiclaw launchd plist (`~/Library/LaunchAgents/<existing-plist>.plist`) and add to `EnvironmentVariables`:
 

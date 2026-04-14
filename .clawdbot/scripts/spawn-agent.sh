@@ -91,8 +91,10 @@ PROMPT_FILE="$(cd "$(dirname "$PROMPT_FILE")" && pwd)/$(basename "$PROMPT_FILE")
 # Ensure worktrees dir exists
 mkdir -p "$(dirname "$WORKTREE_DIR")"
 
-# Create worktree
-cd "$REPO_ROOT"
+# Create worktree from the product repo (NOT the b0b scripts repo).
+# WORKSPACE_REPO_PATH defaults to REPO_ROOT for legacy "scripts inside product
+# repo" setups, but new workspaces set it to the actual product checkout.
+cd "$WORKSPACE_REPO_PATH"
 git fetch origin main --quiet 2>/dev/null || true
 git fetch origin "$BRANCH" --quiet 2>/dev/null || true
 

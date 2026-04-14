@@ -13,12 +13,14 @@ fi
 python3 -c "
 import json, os, subprocess, sys, fcntl
 
-repo_root = sys.argv[1]
+workspace_repo_path = sys.argv[1]
 tasks_file = sys.argv[2]
 worktree_base = sys.argv[3]
 lock_file = sys.argv[4]
 def get_task_repo(task):
-    return repo_root
+    return workspace_repo_path
+
+ws = os.environ.get('B0B_WORKSPACE', 'default')
 
 lock_fd = open(lock_file, 'w')
 fcntl.flock(lock_fd, fcntl.LOCK_EX)
@@ -31,7 +33,8 @@ try:
         if task.get('status') in ('merged', 'abandoned', 'split'):
             tid = task['id']
             worktree = task.get('worktree', os.path.join(worktree_base, tid))
-            tmux = task.get('tmuxSession', f'agent-{tid}')
+            # Fallback matches spawn-agent.sh:70 workspace-prefixed convention.
+            tmux = task.get('tmuxSession', f'agent-{ws}-{tid}')
 
             # Kill tmux if still running
             subprocess.run(['tmux', 'kill-session', '-t', tmux], capture_output=True)
@@ -49,16 +52,16 @@ try:
         json.dump(active, f, indent=2)
         f.write('\n')
 
-    # Advance local main to match origin/main (ff-only so it's safe)
-    # This keeps pipeline scripts current after PR merges
-    subprocess.run(['git', 'fetch', 'origin', 'main'], capture_output=True, cwd=repo_root)
+    # Advance local main to match origin/main (ff-only so it's safe).
+    # This is the PRODUCT repo, not the b0b scripts repo.
+    subprocess.run(['git', 'fetch', 'origin', 'main'], capture_output=True, cwd=workspace_repo_path)
     result = subprocess.run(
         ['git', 'merge', '--ff-only', 'origin/main'],
-        capture_output=True, text=True, cwd=repo_root
+        capture_output=True, text=True, cwd=workspace_repo_path
     )
     if result.returncode == 0 and 'Already up to date' not in result.stdout:
         print(f'Advanced local main: {result.stdout.strip()}')
 finally:
     fcntl.flock(lock_fd, fcntl.LOCK_UN)
     lock_fd.close()
-" "$REPO_ROOT" "$TASKS_FILE" "$WORKTREE_BASE" "$LOCK_FILE"
+" "$WORKSPACE_REPO_PATH" "$TASKS_FILE" "$WORKTREE_BASE" "$LOCK_FILE"

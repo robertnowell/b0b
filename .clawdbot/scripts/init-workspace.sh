@@ -38,6 +38,7 @@ SLACK_PROJECT_CHANNEL=""
 SLACK_ALERTS_CHANNEL=""
 SLACK_REVIEW_USER=""
 WORKTREE_BASE=""
+WORKSPACE_REPO_PATH=""
 CLAUDE_PATH="${CLAUDE_PATH:-${HOME}/.local/bin/claude}"
 HUMAN_NAME=""
 HUMAN_GITHUB=""
@@ -62,6 +63,7 @@ while [[ $# -gt 0 ]]; do
     --slack-alerts-channel)      SLACK_ALERTS_CHANNEL="$2"; shift 2 ;;
     --slack-review-user)         SLACK_REVIEW_USER="$2"; shift 2 ;;
     --worktree-base)             WORKTREE_BASE="$2"; shift 2 ;;
+    --workspace-repo-path)       WORKSPACE_REPO_PATH="$2"; shift 2 ;;
     --claude-path)               CLAUDE_PATH="$2"; shift 2 ;;
     --human-name)                HUMAN_NAME="$2"; shift 2 ;;
     --human-github)              HUMAN_GITHUB="$2"; shift 2 ;;
@@ -102,6 +104,7 @@ fi
 
 # --- Defaults derived from name ---
 [[ -n "$WORKTREE_BASE" ]] || WORKTREE_BASE="${HOME}/Projects/${NAME}-worktrees"
+[[ -n "$WORKSPACE_REPO_PATH" ]] || WORKSPACE_REPO_PATH="${HOME}/Projects/${NAME}"
 [[ -n "$PROJECT_NAME" ]] || PROJECT_NAME="$(echo "${NAME:0:1}" | tr '[:lower:]' '[:upper:]')${NAME:1}"
 [[ -n "$HUMAN_NAME" ]] || HUMAN_NAME="(TBD — edit USER.md)"
 [[ -n "$HUMAN_GITHUB" ]] || HUMAN_GITHUB="(TBD — edit USER.md)"
@@ -119,7 +122,7 @@ IDENTITY_VIBE="Direct, resourceful, ships fast."
 IDENTITY_EMOJI="🤖"
 
 # --- Substitute and write ---
-export NAME WORKSPACE_REPO BOT_USER SLACK_PROJECT_CHANNEL SLACK_ALERTS_CHANNEL SLACK_REVIEW_USER \
+export NAME WORKSPACE_REPO WORKSPACE_REPO_PATH BOT_USER SLACK_PROJECT_CHANNEL SLACK_ALERTS_CHANNEL SLACK_REVIEW_USER \
        WORKTREE_BASE CLAUDE_PATH HUMAN_NAME HUMAN_GITHUB HUMAN_PRONOUNS HUMAN_TIMEZONE \
        PROJECT_NAME PROJECT_URL PROJECT_TAGLINE PROJECT_DESCRIPTION PROJECT_PHILOSOPHY \
        PROJECT_STACK PROJECT_DEPLOY SLACK_PROJECT_CHANNEL_NAME SLACK_ALERTS_CHANNEL_NAME \
@@ -138,7 +141,7 @@ WORKSPACE_NAME = os.environ['NAME']
 substitutions = {
     'WORKSPACE_NAME':            WORKSPACE_NAME,
     'WORKSPACE_REPO':            os.environ['WORKSPACE_REPO'],
-    'WORKSPACE_REPO_PATH':       f"{os.environ['HOME']}/Projects/{WORKSPACE_NAME}",
+    'WORKSPACE_REPO_PATH':       os.environ['WORKSPACE_REPO_PATH'],
     'BOT_USER':                  os.environ['BOT_USER'],
     'WORKTREE_BASE':             os.environ['WORKTREE_BASE'],
     'CLAUDE_PATH':               os.environ['CLAUDE_PATH'],
