@@ -29,7 +29,7 @@ lock_file = sys.argv[3]
 max_runtime = int(sys.argv[4])
 planning_timeout = int(sys.argv[7]) if len(sys.argv) > 7 else max_runtime
 # Optional 8th arg: workspace_repo_path (product repo). Falls back to repo_root
-# (the b0b scripts repo) for legacy "scripts inside product repo" setups.
+# (the b0b scripts repo) for legacy \"scripts inside product repo\" setups.
 workspace_repo_path = sys.argv[8] if len(sys.argv) > 8 else repo_root
 
 ws = os.environ.get('B0B_WORKSPACE', 'default')
