@@ -174,22 +174,47 @@ EOF
     fi
   fi
 
-  # Update kopiclaw plist with B0B_WORKSPACE + B0B_LEGACY (safety belt)
+  # Update kopiclaw plist:
+  #   (a) Repoint ProgramArguments at b0b standalone monitor.sh (so kopiclaw
+  #       starts running the new multi-workspace scripts, not the legacy
+  #       in-kopi-monorepo copy).
+  #   (b) Add EnvironmentVariables.B0B_WORKSPACE=kopiclaw + B0B_LEGACY=1
+  #       (cascade activation + safety belt).
+  # Preserves all other plist fields. Backup in $backup_dir/ for rollback.
   if [[ -n "$plist_file" ]]; then
+    new_monitor="$B0B_REPO_PATH/.clawdbot/scripts/monitor.sh"
     if [[ $DRY_RUN -eq 1 ]]; then
-      echo "  [dry-run] would set EnvironmentVariables.B0B_WORKSPACE=kopiclaw + B0B_LEGACY=1 in $plist_file"
+      echo "  [dry-run] would patch $plist_file:"
+      echo "    ProgramArguments[1] -> $new_monitor"
+      echo "    EnvironmentVariables.B0B_WORKSPACE = kopiclaw"
+      echo "    EnvironmentVariables.B0B_LEGACY = 1"
     else
-      python3 - "$plist_file" <<'PYEOF'
+      python3 - "$plist_file" "$new_monitor" <<'PYEOF'
 import plistlib, sys
-path = sys.argv[1]
+path, new_monitor = sys.argv[1], sys.argv[2]
 with open(path, 'rb') as f:
     pl = plistlib.load(f)
+
+# (a) Repoint ProgramArguments at b0b standalone monitor.sh.
+# Preserve anything past index 1 in case the existing plist passes flags.
+old_args = pl.get('ProgramArguments', [])
+extra_args = old_args[2:] if len(old_args) > 2 else []
+new_args = ['/bin/bash', new_monitor] + extra_args
+if old_args == new_args:
+    print(f'  ProgramArguments already correct — no change needed')
+else:
+    print(f'  ProgramArguments was: {old_args}')
+    print(f'  ProgramArguments now: {new_args}')
+    pl['ProgramArguments'] = new_args
+
+# (b) Add cascade env vars + safety belt
 env = pl.setdefault('EnvironmentVariables', {})
 env['B0B_WORKSPACE'] = 'kopiclaw'
 env['B0B_LEGACY'] = '1'
+
 with open(path, 'wb') as f:
     plistlib.dump(pl, f)
-print(f'  Updated {path}')
+print(f'  Patched {path}')
 PYEOF
       # Validate
       plutil "$plist_file" >/dev/null
