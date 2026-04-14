@@ -1783,7 +1783,7 @@ for task in tasks:
                     print(f'WARNING: Fix agent for {tid} completed with no new commits — flagging for review')
                     apply_updates(tid, {'phase': 'pr_ready', 'status': 'needs_review',
                         'findings': task.get('findings', []) + ['Fix agent completed with zero commits — needs manual review']})
-                    run_notify(tid, 'pr_ready', f'⚠️ Fix agent completed with NO new commits for `{tid}`. Agent may have misread the feedback. <@U020AAXG1DE> Needs manual review.', product_goal)
+                    run_notify(tid, 'pr_ready', f'⚠️ Fix agent completed with NO new commits for \`{tid}\`. Agent may have misread the feedback. <@U020AAXG1DE> Needs manual review.', product_goal)
                     changes_made += 1
                     continue
 
