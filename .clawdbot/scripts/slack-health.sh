@@ -13,8 +13,11 @@
 set -euo pipefail
 
 # --- Config ---
-LAUNCHD_LABEL="ai.openclaw.gateway"
-LAUNCHD_DOMAIN="gui/501"
+# slack-health monitors the SHARED Slack gateway process (one per Mac),
+# not the per-workspace pipeline monitor. Keep LAUNCHD_LABEL pointing at
+# the gateway; override only if you rename the gateway service.
+LAUNCHD_LABEL="${SLACK_GATEWAY_LAUNCHD_LABEL:-ai.openclaw.gateway}"
+LAUNCHD_DOMAIN="${SLACK_GATEWAY_LAUNCHD_DOMAIN:-gui/501}"
 ERR_LOG="${HOME}/.openclaw/logs/gateway.err.log"
 GW_LOG="${HOME}/.openclaw/logs/gateway.log"
 STATE_FILE="${HOME}/.openclaw/slack-health-state.json"
@@ -28,8 +31,8 @@ MAX_RESTARTS=3           # Max restarts before escalation
 ESCALATION_WINDOW=1800   # 30 minutes
 
 # Slack alerting (direct HTTP API, works even when socket mode is dead)
-SLACK_ALERTS_CHANNEL="C0AHGH5FH42"
-SLACK_BOT_TOKEN_FILE="${HOME}/.openclaw/credentials/slack-bot-token"
+SLACK_ALERTS_CHANNEL="${SLACK_ALERTS_CHANNEL:-C0AHGH5FH42}"
+SLACK_BOT_TOKEN_FILE="${SLACK_BOT_TOKEN_FILE:-${HOME}/.openclaw/credentials/slack-bot-token}"
 
 # --- Helpers ---
 log() {

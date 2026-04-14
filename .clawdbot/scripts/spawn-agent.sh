@@ -67,7 +67,10 @@ if [ -n "$MODEL" ]; then
 fi
 
 WORKTREE_DIR="${WORKTREE_BASE}/${TASK_ID}"
-TMUX_SESSION="agent-${TASK_ID}"
+# Workspace-prefix tmux session so two workspaces can't collide on the same TASK_ID.
+# Consumers (check-agents.sh, monitor.sh, kill-task.sh, cleanup-worktrees.sh) read
+# this value from the task record — no other script reconstructs it.
+TMUX_SESSION="agent-${B0B_WORKSPACE:-default}-${TASK_ID}"
 LOG_FILE="${LOG_DIR}/agent-${TASK_ID}.log"
 
 # Ensure logs dir exists
@@ -126,7 +129,7 @@ tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
 
 # Build the wrapper script safely using printf %q for variable embedding
 # This avoids shell injection from paths containing special characters
-WRAPPER="/tmp/agent-${TASK_ID}-run.sh"
+WRAPPER="/tmp/agent-${B0B_WORKSPACE:-default}-${TASK_ID}-run.sh"
 {
   echo '#!/usr/bin/env bash'
   echo 'set -euo pipefail'

@@ -3,7 +3,7 @@
 # Called by monitor.sh each cycle. Outputs log lines to stdout.
 #
 # Flow:
-#   1. Run gh-poll.sh → JSON lines of new @kopi-claw mentions
+#   1. Run gh-poll.sh → JSON lines of new @<bot> mentions (BOT_USER from config.sh)
 #   2. For each comment:
 #      - Known bots → LLM evaluation (skip if no real changes needed)
 #      - Existing task for PR → route as feedback, spawn fix agent if fixable
@@ -38,8 +38,8 @@ POLL="${SCRIPT_DIR}/gh-poll.sh"
 # shellcheck source=notify.sh
 source "${SCRIPT_DIR}/notify.sh"
 
-REPO="tryrendition/Rendition"
-BOT_USER="kopi-claw"
+REPO="${WORKSPACE_REPO}"
+# BOT_USER now comes from config.sh (workspace-overridable)
 MAX_DISPATCHES_PER_CYCLE="${GH_COMMENT_MAX_DISPATCHES:-3}"
 QUEUE_FILE="${GH_COMMENT_QUEUE_FILE:-${STATE_DIR}/gh-comment-queue.jsonl}"
 
@@ -419,7 +419,7 @@ with open(sys.argv[1], 'w') as f:
     f.write('\n')
 " "$STATE_FILE" || echo "ERROR: Failed to commit poll state update"
   fi
-  echo "No new @kopi-claw mentions found"
+  echo "No new @${BOT_USER} mentions found"
   exit 0
 fi
 
@@ -501,8 +501,8 @@ print(json.dumps({
   # Add eyes reaction — processing
   add_reaction "$comment_id" "$comment_type" "eyes"
 
-  # Use comment body as task description (strip @kopi-claw mention, take first 200 chars)
-  task_desc=$(echo "$body" | sed 's/@kopi-claw//gI' | tr '\n' ' ' | sed 's/  */ /g' | cut -c1-200)
+  # Use comment body as task description (strip @<bot> mention, take first 200 chars)
+  task_desc=$(echo "$body" | sed "s/@${BOT_USER}//gI" | tr '\n' ' ' | sed 's/  */ /g' | cut -c1-200)
 
   # Download any attached screenshots so agents can view them
   image_paths=$(download_comment_images "$body" "$comment_id" 2>/dev/null) || image_paths=""

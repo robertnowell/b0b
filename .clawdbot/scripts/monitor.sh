@@ -64,6 +64,9 @@ plans_dir = sys.argv[11]
 max_auto_retries = int(sys.argv[12])
 max_split_depth = int(sys.argv[13])
 max_auto_split_attempts = int(sys.argv[14])
+workspace_repo = sys.argv[15]
+bot_user = sys.argv[16]
+workspace_name = sys.argv[17]
 
 check_output = json.loads(sys.stdin.read())
 
@@ -768,7 +771,8 @@ def spawn_agent(task, phase, prompt_template, agent_override=None):
 
 def auto_revert(task):
     \"\"\"Remove a task's worktree and branch for a completely clean restart.\"\"\"
-    tmux = task.get('tmuxSession', f'agent-{task[\"id\"]}')
+    ws = os.environ.get('B0B_WORKSPACE', 'default')
+    tmux = task.get('tmuxSession', f'agent-{ws}-{task[\"id\"]}')
     subprocess.run(['tmux', 'kill-session', '-t', tmux], capture_output=True)
 
     worktree = task.get('worktree', '')
@@ -790,11 +794,13 @@ def auto_revert(task):
 
 def cleanup_dead_agent(task):
     \"\"\"Kill zombie tmux session and remove stale wrapper script.\"\"\"
-    tmux = task.get('tmuxSession', f'agent-{task[\"id\"]}')
+    # Fallback to workspace-prefixed default (matches spawn-agent.sh:70 convention).
+    ws = os.environ.get('B0B_WORKSPACE', 'default')
+    tmux = task.get('tmuxSession', f'agent-{ws}-{task[\"id\"]}')
     subprocess.run(['tmux', 'kill-session', '-t', tmux], capture_output=True)
 
-    # Remove the wrapper script if it exists
-    wrapper = f'/tmp/agent-{task[\"id\"]}-run.sh'
+    # Remove the wrapper script if it exists (matches spawn-agent.sh:129 convention)
+    wrapper = f'/tmp/agent-{ws}-{task[\"id\"]}-run.sh'
     if os.path.exists(wrapper):
         os.remove(wrapper)
 
@@ -1482,9 +1488,9 @@ for task in tasks:
                     plan_body = f'## Updated Plan\n\n{plan_content[:3800]}'
                     if len(plan_content) > 3800:
                         plan_body += '\n\n_(truncated)_'
-                    plan_body += '\n\n---\n*Posted by Kopiclaw pipeline*'
+                    plan_body += f'\n\n---\n*Posted by {workspace_name} pipeline*'
                     subprocess.run(
-                        ['gh', 'issue', 'comment', str(pr_num), '--repo', 'tryrendition/Rendition', '--body', plan_body],
+                        ['gh', 'issue', 'comment', str(pr_num), '--repo', workspace_repo, '--body', plan_body],
                         capture_output=True, text=True, cwd=repo_root, env=_clean_env)
 
                 requires_review = task.get('requiresPlanReview', False)
@@ -1496,7 +1502,7 @@ for task in tasks:
                         'planFile': plan_file,
                         'planContent': plan_content,
                     })
-                    # Build full plan notification for #project-kopi-claw
+                    # Build full plan notification for the workspace's project channel
                     plan_notify_text = (
                         f'Plan ready for review. Run approve-plan.sh {tid} to proceed.\n\n'
                         f'---\n\n'
@@ -1786,10 +1792,10 @@ for task in tasks:
                 pr_num = task.get('prNumber')
                 feedback = task.get('lastFeedback', '')
                 if pr_num and feedback:
-                    safe_feedback = feedback.replace('@kopi-claw', 'kopi-claw')
-                    body = f'## Feedback Addressed\\n\\n{safe_feedback}\\n\\n---\\n*Posted by Kopiclaw pipeline*'
+                    safe_feedback = feedback.replace(f'@{bot_user}', bot_user)
+                    body = f'## Feedback Addressed\\n\\n{safe_feedback}\\n\\n---\\n*Posted by {workspace_name} pipeline*'
                     subprocess.run(
-                        ['gh', 'issue', 'comment', str(pr_num), '--repo', 'tryrendition/Rendition', '--body', body],
+                        ['gh', 'issue', 'comment', str(pr_num), '--repo', workspace_repo, '--body', body],
                         capture_output=True, text=True, cwd=repo_root, env=_clean_env)
             elif fix_target == 'testing':
                 _t_msg = log_transition(task, 'fixing', 'testing',
@@ -1825,7 +1831,7 @@ for task in tasks:
             if pr_number:
                 # Verify the pre-existing PR is still valid
                 verify_result = subprocess.run(
-                    ['gh', 'api', f'repos/tryrendition/Rendition/pulls/{pr_number}', '--jq', '.state'],
+                    ['gh', 'api', f'repos/{workspace_repo}/pulls/{pr_number}', '--jq', '.state'],
                     capture_output=True, text=True, cwd=task_repo)
                 if verify_result.returncode == 0 and verify_result.stdout.strip() == 'open':
                     pr_lookup_reason = 'pre_existing_pr'
@@ -1885,9 +1891,9 @@ for task in tasks:
                     with open(plan_path) as pf:
                         plan_text = pf.read().strip()
                     if plan_text:
-                        body = f'## Implementation Plan\\n\\n{plan_text}\\n\\n---\\n*Posted by Kopiclaw pipeline*'
+                        body = f'## Implementation Plan\\n\\n{plan_text}\\n\\n---\\n*Posted by {workspace_name} pipeline*'
                         subprocess.run(
-                            ['gh', 'issue', 'comment', str(pr_number), '--repo', 'tryrendition/Rendition', '--body', body],
+                            ['gh', 'issue', 'comment', str(pr_number), '--repo', workspace_repo, '--body', body],
                             capture_output=True, text=True, cwd=task_repo, env=_clean_env)
             else:
                 # If PR is missing after a successful pr_creating run, auto-remediate
@@ -1935,6 +1941,6 @@ for task in tasks:
     # running tasks in non-terminal phases: no action needed (wait for completion)
 
 print(json.dumps({'processed': len(task_map), 'changes_made': changes_made}, indent=2))
-" "$SCRIPT_DIR" "$TASKS_FILE" "$LOCK_FILE" "$REPO_ROOT" "$WORKTREE_BASE" "$MAX_ITERATIONS" "$NOTIFY" "$SPAWN" "$LOG_DIR" "$FILL_TEMPLATE" "$PLANS_DIR" "$MAX_AUTO_RETRIES" "$MAX_SPLIT_DEPTH" "$MAX_AUTO_SPLIT_ATTEMPTS" <<< "$CHECK_OUTPUT"
+" "$SCRIPT_DIR" "$TASKS_FILE" "$LOCK_FILE" "$REPO_ROOT" "$WORKTREE_BASE" "$MAX_ITERATIONS" "$NOTIFY" "$SPAWN" "$LOG_DIR" "$FILL_TEMPLATE" "$PLANS_DIR" "$MAX_AUTO_RETRIES" "$MAX_SPLIT_DEPTH" "$MAX_AUTO_SPLIT_ATTEMPTS" "$WORKSPACE_REPO" "$BOT_USER" "$WORKSPACE_NAME" <<< "$CHECK_OUTPUT"
 
 log "=== Monitor run completed ==="

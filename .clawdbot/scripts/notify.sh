@@ -95,11 +95,11 @@ print(json.dumps(payload))
 }
 
 _post_plan_to_slack() {
-  # Post the full plan to #project-kopi-claw with @mention
+  # Post the full plan to the workspace's project channel with @mention
   local task_id="$1" plan_text="$2" product_goal="$3"
 
   [[ -n "${SLACK_BOT_TOKEN:-}" ]] || {
-    echo "[notify] No SLACK_BOT_TOKEN — skipping plan post to #project-kopi-claw" >&2
+    echo "[notify] No SLACK_BOT_TOKEN — skipping plan post to ${SLACK_PROJECT_CHANNEL}" >&2
     return 0
   }
 
@@ -162,7 +162,7 @@ EOF
   # Log to stdout regardless
   echo "[notify] ${task_id} (${phase}): ${message}"
 
-  # Send to #alerts-kopi-claw via bot token
+  # Send to the workspace's alerts channel via bot token
   if [ -n "${SLACK_BOT_TOKEN:-}" ]; then
     _slack_bot_post "$SLACK_ALERTS_CHANNEL" <<< "$notification"
   else
@@ -183,7 +183,7 @@ ${full_plan}
 EOF
   fi
 
-  # For plan_review: also post full plan to #project-kopi-claw with @mention
+  # For plan_review: also post full plan to the workspace's project channel with @mention
   if [ "$phase" = "plan_review" ]; then
     _post_plan_to_slack "$task_id" "$message" "$product_goal"
   fi

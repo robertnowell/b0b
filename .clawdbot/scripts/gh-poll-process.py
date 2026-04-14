@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Process GitHub comments for @kopi-claw mentions."""
-import json, sys
+"""Process GitHub comments for @<bot> mentions. BOT_USER from env."""
+import json, os, sys
 
-MENTION = "@kopi-claw"
-BOT_AUTHORS = {"kopi-claw", "github-actions[bot]", "github-actions"}
+BOT_USER = os.environ.get("BOT_USER", "kopi-claw")
+MENTION = f"@{BOT_USER}"
+BOT_AUTHORS = {BOT_USER, "github-actions[bot]", "github-actions"}
 
 state_file = sys.argv[1]
 now = sys.argv[2]

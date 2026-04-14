@@ -9,12 +9,31 @@ PROMPTS_DIR="${CLAWDBOT_DIR}/prompts"
 # State lives outside the repo (not committed). Override with CLAWDBOT_STATE_DIR env var.
 STATE_DIR="${CLAWDBOT_STATE_DIR:-${HOME}/.openclaw/workspace-kopiclaw/pipeline}"
 
+# Workspace-specific overrides (unless legacy mode).
+# Sourced BEFORE derived paths so everything downstream picks up workspace values.
+# Set B0B_LEGACY=1 to bypass and force kopiclaw-compatible defaults (rollback flag).
+if [ -z "${B0B_LEGACY:-}" ] && [ -n "${B0B_WORKSPACE:-}" ] \
+    && [ -f "${HOME}/.openclaw/${B0B_WORKSPACE}/config.sh" ]; then
+  # shellcheck source=/dev/null
+  source "${HOME}/.openclaw/${B0B_WORKSPACE}/config.sh"
+fi
+
 TASKS_FILE="${STATE_DIR}/active-tasks.json"
 LOCK_FILE="${STATE_DIR}/.tasks.lock"
 LOG_DIR="${STATE_DIR}/logs"
 PLANS_DIR="${STATE_DIR}/plans"
 
-WORKTREE_BASE="/Users/kopi/Projects/kopi-worktrees"
+WORKTREE_BASE="${WORKTREE_BASE:-/Users/kopi/Projects/kopi-worktrees}"
+
+# Target product repo (distinct from REPO_ROOT, which is the b0b scripts repo).
+WORKSPACE_REPO="${WORKSPACE_REPO:-tryrendition/Rendition}"
+
+# Bot identity for GitHub mentions. Defaults to kopi-claw for backward compat;
+# new workspaces default to b0b in the _template/config.sh.
+BOT_USER="${BOT_USER:-kopi-claw}"
+
+# Human-readable workspace name for user-facing strings.
+WORKSPACE_NAME="${B0B_WORKSPACE:-Kopiclaw}"
 
 MAX_RUNTIME_SECONDS="${MAX_RUNTIME_SECONDS:-2700}"
 PLANNING_TIMEOUT_SECONDS="${PLANNING_TIMEOUT_SECONDS:-1200}"   # 20 minutes
@@ -44,12 +63,12 @@ GH_POLL_STATE_FILE="${GH_POLL_STATE_FILE:-${STATE_DIR}/gh-poll-state.json}"
 GH_COMMENT_KNOWN_BOTS="${GH_COMMENT_KNOWN_BOTS:-kilo-code[bot],github-actions[bot]}"
 GH_COMMENT_QUEUE_FILE="${STATE_DIR}/gh-comment-queue.jsonl"
 
-CLAUDE_PATH="/Users/kopi/.local/bin/claude"
-CODEX_PATH="/Applications/Codex.app/Contents/Resources/codex"
+CLAUDE_PATH="${CLAUDE_PATH:-${HOME}/.local/bin/claude}"
+CODEX_PATH="${CODEX_PATH:-/Applications/Codex.app/Contents/Resources/codex}"
 SLACK_BOT_TOKEN="${SLACK_BOT_TOKEN:-}"
-SLACK_PROJECT_CHANNEL="C0AJAR3S76U"    # #project-kopi-claw
-SLACK_ALERTS_CHANNEL="C0AHGH5FH42"     # #alerts-kopi-claw
-SLACK_REVIEW_USER="U020AAXG1DE"        # Robert — ping on plan_review
+SLACK_PROJECT_CHANNEL="${SLACK_PROJECT_CHANNEL:-C0AJAR3S76U}"    # #project-kopi-claw (kopiclaw default)
+SLACK_ALERTS_CHANNEL="${SLACK_ALERTS_CHANNEL:-C0AHGH5FH42}"      # #alerts-kopi-claw (kopiclaw default)
+SLACK_REVIEW_USER="${SLACK_REVIEW_USER:-U020AAXG1DE}"            # Robert — ping on plan_review
 
 # Read bot token from credentials file if env var not set
 if [ -z "${SLACK_BOT_TOKEN:-}" ] && [ -f "${HOME}/.openclaw/credentials/slack-bot-token" ]; then
