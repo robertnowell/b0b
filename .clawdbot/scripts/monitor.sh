@@ -1947,4 +1947,25 @@ for task in tasks:
 print(json.dumps({'processed': len(task_map), 'changes_made': changes_made}, indent=2))
 " "$SCRIPT_DIR" "$TASKS_FILE" "$LOCK_FILE" "$REPO_ROOT" "$WORKTREE_BASE" "$MAX_ITERATIONS" "$NOTIFY" "$SPAWN" "$LOG_DIR" "$FILL_TEMPLATE" "$PLANS_DIR" "$MAX_AUTO_RETRIES" "$MAX_SPLIT_DEPTH" "$MAX_AUTO_SPLIT_ATTEMPTS" "$WORKSPACE_REPO" "$BOT_USER" "$WORKSPACE_NAME" "$WORKSPACE_REPO_PATH" <<< "$CHECK_OUTPUT"
 
+# Post pipeline status to Slack (replaces the OpenClaw cron monitor-pipeline job — no LLM needed)
+if [ -n "${SLACK_BOT_TOKEN:-}" ] && [ -x "${SCRIPT_DIR}/pipeline-status.sh" ]; then
+  status_text="$("${SCRIPT_DIR}/pipeline-status.sh" 2>/dev/null || true)"
+  if [ -n "$status_text" ]; then
+    if python3 -c "
+import json, sys
+payload = {'channel': sys.argv[1], 'text': sys.argv[2], 'unfurl_links': False, 'unfurl_media': False}
+print(json.dumps(payload))
+" "$SLACK_ALERTS_CHANNEL" "$status_text" | curl -s -f -o /dev/null \
+        -X POST \
+        -H "Authorization: Bearer ${SLACK_BOT_TOKEN}" \
+        -H 'Content-type: application/json; charset=utf-8' \
+        --data @- \
+        'https://slack.com/api/chat.postMessage'; then
+      log "Posted pipeline status to Slack (${#status_text} chars)"
+    else
+      log "WARNING: failed to post pipeline status to Slack"
+    fi
+  fi
+fi
+
 log "=== Monitor run completed ==="
